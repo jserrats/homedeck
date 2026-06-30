@@ -51,7 +51,6 @@ class Frame:
     room: Room | None = None
     page: int = 0
     entity: DeviceEntity | None = None  # the light being edited in a LIGHT_GRID
-    held_key: int = 0                   # key that was held to open the grid
 
 
 class ActionKind(Enum):
@@ -60,7 +59,6 @@ class ActionKind(Enum):
     FLOOR_HEADER = auto()  # non-interactive section label
     ENTITY = auto()
     GRID_CELL = auto()     # a brightness/color-temp preset in the light grid
-    GRID_SOURCE = auto()   # the held light shown beside the grid; press to close
     BACK = auto()
     PAGE = auto()
     BLANK = auto()
@@ -152,8 +150,6 @@ class Navigation:
             return self.renderer.device(action.entity)
         if action.kind is ActionKind.GRID_CELL:
             return self.renderer.light_cell(action.data["color_temp_kelvin"], action.data["brightness_pct"])
-        if action.kind is ActionKind.GRID_SOURCE:
-            return self.renderer.device(action.entity)
         if action.kind is ActionKind.BACK:
             return self.renderer.nav("back")
         if action.kind is ActionKind.PAGE:
@@ -209,28 +205,22 @@ class Navigation:
         return layout_security(groups, self.display.key_count, cols, frame.page)
 
     def _light_grid_key_map(self, frame: Frame) -> dict[int, Action]:
-        """4x4 brightness x color-temperature picker in the half opposite the held key.
-
-        Columns = color temperature (warm→cool), rows = brightness (top brightest).
-        The held light stays visible (GRID_SOURCE); pressing it closes the grid.
+        """Full-deck picker: every key is a preset. Rows = brightness (top
+        brightest), columns = color temperature across the light's full range.
+        Tapping a cell applies it and closes the picker.
         """
-        entity, held = frame.entity, frame.held_key
+        entity = frame.entity
         cols = getattr(self.display, "cols", 0)
         rows = self.display.key_count // cols if cols else 0
-        result: dict[int, Action] = {held: Action(ActionKind.GRID_SOURCE, entity=entity)}
-        if entity is None or cols < 8 or rows < 4:
-            return result  # can't host a 4x4 grid; just show the source/back
+        if entity is None or cols < 2 or rows < 2:
+            return {}
 
-        # Place the 4-wide block in the half that doesn't contain the held key.
-        half = cols // 2
-        block = list(range(0, 4)) if (held % cols) >= half else list(range(cols - 4, cols))
-
-        brightness, kelvins = entity.light_grid_levels()
+        brightness, kelvins = entity.light_grid_levels(rows, cols)
         brightness_top_down = list(reversed(brightness))  # row 0 = brightest
-        for r in range(4):
-            for c in range(4):
-                key = r * cols + block[c]
-                result[key] = Action(
+        result: dict[int, Action] = {}
+        for r in range(rows):
+            for c in range(cols):
+                result[r * cols + c] = Action(
                     ActionKind.GRID_CELL,
                     entity=entity,
                     data={"brightness_pct": brightness_top_down[r], "color_temp_kelvin": kelvins[c]},
@@ -304,8 +294,8 @@ class Navigation:
         if action.kind is ActionKind.ENTITY and action.entity is not None:
             entity = action.entity
             long = entity.has_long_press and (time.monotonic() - start) >= LONG_PRESS_S
-            if long and entity.supports_light_grid:
-                self._open_light_grid(key, entity)  # opens the picker; view changes
+            if long and entity.supports_light_grid and self._grid_fits():
+                self._open_light_grid(entity)  # opens the picker; view changes
             else:
                 self._invoke(entity, long=long)
                 self._restore_key(key)  # clear any hold feedback
@@ -351,8 +341,6 @@ class Navigation:
             self._change_page(action.delta)
         elif action.kind is ActionKind.GRID_CELL:
             self._apply_light_cell(action)
-        elif action.kind is ActionKind.GRID_SOURCE:
-            self._pop()  # tap the source light to close the picker
         elif action.kind is ActionKind.ENTITY and action.entity is not None:
             if action.entity.is_controllable:
                 self._invoke(action.entity, long=False)
@@ -396,14 +384,13 @@ class Navigation:
         lights.sort(key=lambda e: e.name.lower())
         return lights
 
-    def _open_light_grid(self, held_key: int, entity: DeviceEntity) -> None:
+    def _grid_fits(self) -> bool:
         cols = getattr(self.display, "cols", 0)
         rows = self.display.key_count // cols if cols else 0
-        if cols < 8 or rows < 4:  # deck too small for the picker: just toggle
-            self._invoke(entity, long=False)
-            self._restore_key(held_key)
-            return
-        self._push(Frame(FrameKind.LIGHT_GRID, entity=entity, held_key=held_key))
+        return cols >= 2 and rows >= 2
+
+    def _open_light_grid(self, entity: DeviceEntity) -> None:
+        self._push(Frame(FrameKind.LIGHT_GRID, entity=entity))
 
     def _apply_light_cell(self, action: Action) -> None:
         call = ("light", "turn_on", action.entity.entity_id, action.data or {})

@@ -214,12 +214,24 @@ class DeviceEntity:
         modes = self.attributes.get("supported_color_modes") or []
         return "color_temp" in modes
 
-    def light_grid_levels(self) -> tuple[list[int], list[int]]:
-        """Return (brightness_percents, color_temp_kelvins), each 4 long, low→high."""
-        brightness = [10, 40, 70, 100]
+    def light_grid_levels(self, n_brightness: int = 4, n_color: int = 8) -> tuple[list[int], list[int]]:
+        """Return (brightness_percents, color_temp_kelvins), low→high.
+
+        Brightness spans 10→100%; color temperature spans the light's own
+        ``min_color_temp_kelvin``→``max_color_temp_kelvin`` (its full range).
+        """
+        low = 10
+        if n_brightness <= 1:
+            brightness = [100]
+        else:
+            brightness = [round(low + (100 - low) * i / (n_brightness - 1)) for i in range(n_brightness)]
+
         min_k = int(self.attributes.get("min_color_temp_kelvin") or 2000)
         max_k = int(self.attributes.get("max_color_temp_kelvin") or 6500)
-        kelvins = [round(min_k + (max_k - min_k) * j / 3) for j in range(4)]
+        if n_color <= 1:
+            kelvins = [min_k]
+        else:
+            kelvins = [round(min_k + (max_k - min_k) * j / (n_color - 1)) for j in range(n_color)]
         return brightness, kelvins
 
     @property

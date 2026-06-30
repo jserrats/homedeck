@@ -34,6 +34,8 @@ class DeckController:
         self.deck.set_brightness(brightness)
         self._lock = threading.Lock()
         self.key_size: tuple[int, int] = tuple(self.deck.key_image_format()["size"])  # (w, h)
+        rows, cols = self.deck.key_layout()  # (rows, columns)
+        self.cols = cols
         logger.info(
             "Opened %s (%d keys, %dx%d)",
             self.deck.deck_type(),

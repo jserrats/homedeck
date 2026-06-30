@@ -88,6 +88,13 @@ def _key_of(nav, entity_id):
     )
 
 
+# Lock release re-renders the key (to clear hold feedback), which needs fonts.
+requires_assets = pytest.mark.skipif(not icons.META_PATH.exists(), reason="MDI assets not fetched")
+
+FEEDBACK_BG = (30, 100, 175)  # renderer.hold_feedback background
+
+
+@requires_assets
 def test_short_press_locks_or_unlocks(monkeypatch):
     nav, calls, clock = _nav_with_lock(monkeypatch)
     key = _key_of(nav, "lock.front")
@@ -99,6 +106,7 @@ def test_short_press_locks_or_unlocks(monkeypatch):
     assert calls == [("lock", "unlock", "lock.front")]  # was locked -> unlock
 
 
+@requires_assets
 def test_long_press_opens_door(monkeypatch):
     nav, calls, clock = _nav_with_lock(monkeypatch)
     key = _key_of(nav, "lock.front")
@@ -107,6 +115,34 @@ def test_long_press_opens_door(monkeypatch):
     clock["t"] += 1.0                       # held past the long-press threshold
     nav.handle_press(key, pressed=False)
     assert calls == [("lock", "open", "lock.front")]
+
+
+@requires_assets
+def test_hold_shows_feedback_then_restores(monkeypatch):
+    nav, calls, clock = _nav_with_lock(monkeypatch)
+    key = _key_of(nav, "lock.front")
+
+    nav.handle_press(key, pressed=True)        # arms the hold timer
+    nav._show_hold_feedback(key)               # simulate the threshold being reached
+    assert nav.display.images[key].getpixel((0, 0)) == FEEDBACK_BG  # "release to open" shown
+
+    clock["t"] += 1.0
+    nav.handle_press(key, pressed=False)        # release -> open + restore normal key
+    assert calls == [("lock", "open", "lock.front")]
+    assert nav.display.images[key].getpixel((0, 0)) != FEEDBACK_BG
+
+
+@requires_assets
+def test_feedback_not_shown_if_released_early(monkeypatch):
+    nav, calls, clock = _nav_with_lock(monkeypatch)
+    key = _key_of(nav, "lock.front")
+
+    nav.handle_press(key, pressed=True)
+    clock["t"] += 0.1
+    nav.handle_press(key, pressed=False)        # released before threshold
+    # timer fires late but the key is no longer held -> no feedback drawn
+    nav._show_hold_feedback(key)
+    assert key not in nav.display.images or nav.display.images[key].getpixel((0, 0)) != FEEDBACK_BG
 
 
 def test_light_fires_immediately_on_press_down(monkeypatch):

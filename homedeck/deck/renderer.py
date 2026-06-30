@@ -147,6 +147,18 @@ class KeyRenderer:
         self._draw_label(draw, label, y=int(self.h * 0.64), size=12, color=NAV_COLOR, max_lines=1)
         return img
 
+    def hold_feedback(self, icon_name: str = "door-open", label: str = "Release to open") -> Image.Image:
+        """Shown while a long-press is armed (held past the threshold).
+
+        A filled blue tile so it clearly stands out from the normal key.
+        """
+        bg = (30, 100, 175)
+        img = Image.new("RGB", (self.w, self.h), bg)
+        draw = ImageDraw.Draw(img)
+        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.40), cy=int(self.h * 0.34), color=(255, 255, 255))
+        self._draw_label(draw, label, y=int(self.h * 0.60), size=12, color=(255, 255, 255))
+        return img
+
     def blank(self) -> Image.Image:
         img, _ = self._canvas()
         return img

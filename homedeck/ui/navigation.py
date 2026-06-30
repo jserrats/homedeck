@@ -109,6 +109,7 @@ class Navigation:
         self.stack: list[Frame] = [Frame(FrameKind.HOME)]
         self.key_map: dict[int, Action] = {}
         self._press_start: dict[int, float] = {}  # key -> press-down time, for long-press keys
+        self._hold_timers: dict[int, threading.Timer] = {}  # key -> armed-feedback timer
         self._lock = threading.RLock()
         self._disconnected = False
 
@@ -141,10 +142,26 @@ class Navigation:
 
     def _build_key_map(self) -> dict[int, Action]:
         frame = self.stack[-1]
+        if frame.kind is FrameKind.ROOM:
+            return self._room_key_map(frame)
         items = self._items_for(frame)
         # Any frame below the home frame gets a Back key.
         fixed: dict[int, Action] = {0: Action(ActionKind.BACK)} if len(self.stack) > 1 else {}
         return layout_page(items, self.display.key_count, fixed, frame.page)
+
+    def _room_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Room view: controls in the top rows, sensors in a bottom band."""
+        room = frame.room
+        if room is not None and room.is_dynamic:
+            room.entities = self._collect_on_lights()  # recompute live membership
+        entities = room.entities if room else []
+        controls = [Action(ActionKind.ENTITY, entity=e) for e in entities if e.is_controllable]
+        readouts = [Action(ActionKind.ENTITY, entity=e) for e in entities if not e.is_controllable]
+
+        cols = getattr(self.display, "cols", 0)
+        if not cols:  # no grid info: fall back to a flat sequential layout
+            return layout_page(controls + readouts, self.display.key_count, {0: Action(ActionKind.BACK)}, frame.page)
+        return layout_room(controls, readouts, self.display.key_count, cols, frame.page)
 
     def _items_for(self, frame: Frame) -> list[Action]:
         if frame.kind is FrameKind.HOME:
@@ -174,6 +191,7 @@ class Navigation:
             action = self.key_map.get(key)
             if not pressed:
                 start = self._press_start.pop(key, None)
+                timer = self._hold_timers.pop(key, None)
 
         if pressed:
             if action is None:
@@ -181,18 +199,44 @@ class Navigation:
             # Long-press-capable entities (locks) defer to release so we can tell
             # a short press from a long one; everything else fires immediately.
             if action.kind is ActionKind.ENTITY and action.entity is not None and action.entity.has_long_press:
-                with self._lock:
-                    self._press_start[key] = time.monotonic()
+                self._arm_hold(key, action.entity)
                 return
             self._dispatch_down(action)
             return
 
         # release: only meaningful for the deferred long-press-capable keys
+        if timer is not None:
+            timer.cancel()
         if start is None or action is None:
             return
         if action.kind is ActionKind.ENTITY and action.entity is not None:
             held = time.monotonic() - start
             self._invoke(action.entity, long=action.entity.has_long_press and held >= LONG_PRESS_S)
+            self._restore_key(key)  # clear any "release to open" feedback
+
+    def _arm_hold(self, key: int, entity: DeviceEntity) -> None:
+        """Record press time and schedule the armed-feedback render."""
+        timer = threading.Timer(LONG_PRESS_S, self._show_hold_feedback, args=(key,))
+        timer.daemon = True
+        with self._lock:
+            self._press_start[key] = time.monotonic()
+            self._hold_timers[key] = timer
+        timer.start()
+
+    def _show_hold_feedback(self, key: int) -> None:
+        """Fired by the timer: if the key is still held, show it is armed."""
+        with self._lock:
+            if self._disconnected or key not in self._press_start:
+                return  # released (or disconnected) before the threshold
+            self.display.set_image(key, self.renderer.hold_feedback())
+
+    def _restore_key(self, key: int) -> None:
+        with self._lock:
+            if self._disconnected:
+                return
+            action = self.key_map.get(key)
+            if action is not None:
+                self.display.set_image(key, self._image_for(action))
 
     def _dispatch_down(self, action: Action) -> None:
         if action.kind is ActionKind.OPEN_ROOM:
@@ -298,6 +342,46 @@ class Navigation:
         img = self.renderer.message("No HA")
         for key in range(self.display.key_count):
             self.display.set_image(key, img)
+
+
+def layout_room(
+    controls: list[Action],
+    readouts: list[Action],
+    total_keys: int,
+    cols: int,
+    page: int,
+) -> dict[int, Action]:
+    """Lay out a room: Back at key 0, controls top, read-only sensors bottom.
+
+    Sensors get their own band of rows flush to the bottom of the grid, visually
+    separated from the controllable devices in the top rows. When everything
+    can't fit on one page, falls back to a paginated sequential layout
+    (controls first, then sensors) so nothing is lost.
+    """
+    back: dict[int, Action] = {0: Action(ActionKind.BACK)}
+    rows = total_keys // cols
+
+    sensor_rows = min(_ceil_div(len(readouts), cols), rows - 1) if readouts else 0
+    control_rows = rows - sensor_rows
+    control_capacity = control_rows * cols - 1  # minus Back at key 0
+    sensor_capacity = sensor_rows * cols
+
+    if len(controls) > control_capacity or len(readouts) > sensor_capacity:
+        return layout_page(controls + readouts, total_keys, back, page)
+
+    result = dict(back)
+    control_slots = [k for k in range(control_rows * cols) if k != 0]
+    for slot, action in zip(control_slots, controls):
+        result[slot] = action
+
+    sensor_start = (rows - sensor_rows) * cols
+    for slot, action in zip(range(sensor_start, total_keys), readouts):
+        result[slot] = action
+    return result
+
+
+def _ceil_div(a: int, b: int) -> int:
+    return -(-a // b)
 
 
 def layout_page(items: list[Action], total_keys: int, fixed: dict[int, Action], page: int) -> dict[int, Action]:

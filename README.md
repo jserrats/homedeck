@@ -7,9 +7,13 @@ auto-populated with that area's devices:
 
 - **Lights, switches, fans, covers** — a single press toggles the device.
 - **Locks** — a single press locks/unlocks; a **long press** (hold ≈0.5 s) opens the door
-  (`lock.open`). The padlock is **green** when locked, **grey** when unlocked, a **yellow
-  clock** while locking/unlocking (change in progress), and a **red alert** when jammed.
-- **Sensors & climate** — the current value is displayed.
+  (`lock.open`). Once you've held long enough, the key changes to a blue **"Release to open"**
+  tile so you know the long-press is armed before you let go. The padlock is **green** when
+  locked, **grey** when unlocked, a **yellow clock** while locking/unlocking (change in
+  progress), and a **red alert** when jammed.
+- **Sensors & climate** — the current value is displayed. Within a room, the read-only
+  sensors are grouped into a band at the **bottom rows**, separated from the controllable
+  devices in the top rows.
 - Each key shows the entity's **HA icon and name**, and the **icon color reflects state**:
   amber = on, grey = off, red = unavailable.
 

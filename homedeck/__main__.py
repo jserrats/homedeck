@@ -89,7 +89,7 @@ def run_deck(config: Config) -> int:
     deck = DeckController(brightness=config.brightness)
     renderer = KeyRenderer(deck.key_size)
 
-    def on_service(call: tuple[str, str, str]) -> None:
+    def on_service(call: tuple[str, str, str, dict]) -> None:
         client.call_service(*call)
 
     navigation = Navigation(

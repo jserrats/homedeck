@@ -137,7 +137,7 @@ def test_status_and_value():
     lamp = by_id["light.lamp"]
     assert lamp.is_controllable is True
     assert lamp.display_value() is None
-    assert lamp.service_call() == ("light", "toggle", "light.lamp")
+    assert lamp.service_call() == ("light", "toggle", "light.lamp", {})
 
 
 def test_update_from_state():

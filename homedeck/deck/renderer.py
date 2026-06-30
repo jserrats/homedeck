@@ -162,6 +162,20 @@ class KeyRenderer:
         self._draw_label(draw, label, y=int(self.h * 0.64), size=12, color=NAV_COLOR, max_lines=1)
         return img
 
+    def light_cell(self, kelvin: int, brightness_pct: int) -> Image.Image:
+        """A swatch previewing a (color temperature, brightness) light preset."""
+        base = _kelvin_to_rgb(kelvin)
+        factor = max(0.14, brightness_pct / 100)  # keep dim cells faintly visible
+        bg = tuple(int(c * factor) for c in base)
+        img = Image.new("RGB", (self.w, self.h), bg)
+        draw = ImageDraw.Draw(img)
+        # Dark text on light swatches, light text on dark ones.
+        luma = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2]
+        fg = (20, 20, 20) if luma > 140 else (245, 245, 245)
+        draw.text((self.w / 2, self.h * 0.40), f"{brightness_pct}%", font=self._value_font(int(self.h * 0.24)), fill=fg, anchor="mm")
+        draw.text((self.w / 2, self.h * 0.72), f"{kelvin}K", font=self._label_font(11), fill=fg, anchor="mm")
+        return img
+
     def hold_feedback(self, icon_name: str = "door-open", label: str = "Release to open") -> Image.Image:
         """Shown while a long-press is armed (held past the threshold).
 
@@ -183,6 +197,34 @@ class KeyRenderer:
         self._draw_glyph(draw, icons.glyph("lan-disconnect"), size=int(self.h * 0.34), cy=int(self.h * 0.34), color=color)
         self._draw_label(draw, text, y=int(self.h * 0.60), size=12, color=color, max_lines=2)
         return img
+
+
+def _kelvin_to_rgb(kelvin: int) -> tuple[int, int, int]:
+    """Approximate the RGB white point of a color temperature (Tanner Helland)."""
+    t = max(1000, min(40000, kelvin)) / 100.0
+    if t <= 66:
+        r = 255.0
+        g = 99.4708025861 * _log(t) - 161.1195681661
+    else:
+        r = 329.698727446 * ((t - 60) ** -0.1332047592)
+        g = 288.1221695283 * ((t - 60) ** -0.0755148492)
+    if t >= 66:
+        b = 255.0
+    elif t <= 19:
+        b = 0.0
+    else:
+        b = 138.5177312231 * _log(t - 10) - 305.0447927307
+    return (_clamp8(r), _clamp8(g), _clamp8(b))
+
+
+def _clamp8(v: float) -> int:
+    return max(0, min(255, int(round(v))))
+
+
+def _log(x: float) -> float:
+    import math
+
+    return math.log(x)
 
 
 def _wrap(text: str, font: ImageFont.FreeTypeFont, max_width: int, max_lines: int) -> list[str]:

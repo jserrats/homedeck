@@ -83,9 +83,9 @@ class HaClient:
             result[st.entity_id] = {"state": st.state, "attributes": attrs}
         return result
 
-    def call_service(self, domain: str, service: str, entity_id: str) -> None:
+    def call_service(self, domain: str, service: str, entity_id: str, data: dict | None = None) -> None:
         with self._cmd_lock:
-            self._cmd.trigger_service(domain, service, entity_id=entity_id)
+            self._cmd.trigger_service(domain, service, entity_id=entity_id, **(data or {}))
 
     # -- event connection ---------------------------------------------------
 

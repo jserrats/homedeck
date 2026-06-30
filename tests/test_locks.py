@@ -32,15 +32,15 @@ def test_lock_status(state, status):
 
 
 def test_lock_short_press_toggles_by_state():
-    assert _lock("locked").service_call() == ("lock", "unlock", "lock.front")
-    assert _lock("unlocked").service_call() == ("lock", "lock", "lock.front")
-    assert _lock("jammed").service_call() == ("lock", "lock", "lock.front")
+    assert _lock("locked").service_call() == ("lock", "unlock", "lock.front", {})
+    assert _lock("unlocked").service_call() == ("lock", "lock", "lock.front", {})
+    assert _lock("jammed").service_call() == ("lock", "lock", "lock.front", {})
 
 
 def test_lock_long_press_opens():
     lock = _lock("locked")
     assert lock.has_long_press is True
-    assert lock.long_press_call() == ("lock", "open", "lock.front")
+    assert lock.long_press_call() == ("lock", "open", "lock.front", {})
 
 
 def test_non_lock_has_no_long_press():
@@ -103,7 +103,7 @@ def test_short_press_locks_or_unlocks(monkeypatch):
     assert calls == []
     clock["t"] += 0.1                       # quick release
     nav.handle_press(key, pressed=False)
-    assert calls == [("lock", "unlock", "lock.front")]  # was locked -> unlock
+    assert calls == [("lock", "unlock", "lock.front", {})]  # was locked -> unlock
 
 
 @requires_assets
@@ -114,7 +114,7 @@ def test_long_press_opens_door(monkeypatch):
     nav.handle_press(key, pressed=True)
     clock["t"] += 1.0                       # held past the long-press threshold
     nav.handle_press(key, pressed=False)
-    assert calls == [("lock", "open", "lock.front")]
+    assert calls == [("lock", "open", "lock.front", {})]
 
 
 @requires_assets
@@ -123,12 +123,12 @@ def test_hold_shows_feedback_then_restores(monkeypatch):
     key = _key_of(nav, "lock.front")
 
     nav.handle_press(key, pressed=True)        # arms the hold timer
-    nav._show_hold_feedback(key)               # simulate the threshold being reached
+    nav._show_hold_feedback(key, nav.key_map[key].entity)  # simulate threshold reached
     assert nav.display.images[key].getpixel((0, 0)) == FEEDBACK_BG  # "release to open" shown
 
     clock["t"] += 1.0
     nav.handle_press(key, pressed=False)        # release -> open + restore normal key
-    assert calls == [("lock", "open", "lock.front")]
+    assert calls == [("lock", "open", "lock.front", {})]
     assert nav.display.images[key].getpixel((0, 0)) != FEEDBACK_BG
 
 
@@ -141,7 +141,7 @@ def test_feedback_not_shown_if_released_early(monkeypatch):
     clock["t"] += 0.1
     nav.handle_press(key, pressed=False)        # released before threshold
     # timer fires late but the key is no longer held -> no feedback drawn
-    nav._show_hold_feedback(key)
+    nav._show_hold_feedback(key, _lock("locked"))
     assert key not in nav.display.images or nav.display.images[key].getpixel((0, 0)) != FEEDBACK_BG
 
 
@@ -150,6 +150,6 @@ def test_light_fires_immediately_on_press_down(monkeypatch):
     key = _key_of(nav, "light.hall")
 
     nav.handle_press(key, pressed=True)     # non-lock: immediate
-    assert calls == [("light", "toggle", "light.hall")]
+    assert calls == [("light", "toggle", "light.hall", {})]
     nav.handle_press(key, pressed=False)    # release is a no-op
     assert len(calls) == 1

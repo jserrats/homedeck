@@ -182,31 +182,49 @@ class DeviceEntity:
             return self.state
         return None
 
-    def service_call(self) -> tuple[str, str, str] | None:
-        """Return (domain, service, entity_id) for a single press, or None.
+    def service_call(self) -> tuple[str, str, str, dict] | None:
+        """Return (domain, service, entity_id, service_data) for a single press.
 
         Lights/switches/fans/covers toggle; a lock locks or unlocks depending on
-        its current state; sensors/climate are display-only.
+        its current state; sensors/climate are display-only (None).
         """
         if self.domain in TOGGLE_DOMAINS:
-            return (self.domain, "toggle", self.entity_id)
+            return (self.domain, "toggle", self.entity_id, {})
         if self.domain == LOCK_DOMAIN:
             service = "unlock" if (self.state or "").lower() == "locked" else "lock"
-            return (LOCK_DOMAIN, service, self.entity_id)
+            return (LOCK_DOMAIN, service, self.entity_id, {})
         return None
 
-    def long_press_call(self) -> tuple[str, str, str] | None:
-        """Return the service for a long press, or None if it has no long action.
-
-        Locks open the door/latch (lock.open) on a long press.
-        """
+    def long_press_call(self) -> tuple[str, str, str, dict] | None:
+        """Service to run on a long press, or None (e.g. the light grid is not a
+        plain service call). Locks open the door/latch (lock.open)."""
         if self.domain == LOCK_DOMAIN:
-            return (LOCK_DOMAIN, "open", self.entity_id)
+            return (LOCK_DOMAIN, "open", self.entity_id, {})
         return None
 
     @property
+    def supports_light_grid(self) -> bool:
+        """A light that supports both dimming and color temperature.
+
+        HA's ``color_temp`` color mode implies brightness support, so its
+        presence in ``supported_color_modes`` is enough.
+        """
+        if self.domain != "light":
+            return False
+        modes = self.attributes.get("supported_color_modes") or []
+        return "color_temp" in modes
+
+    def light_grid_levels(self) -> tuple[list[int], list[int]]:
+        """Return (brightness_percents, color_temp_kelvins), each 4 long, low→high."""
+        brightness = [10, 40, 70, 100]
+        min_k = int(self.attributes.get("min_color_temp_kelvin") or 2000)
+        max_k = int(self.attributes.get("max_color_temp_kelvin") or 6500)
+        kelvins = [round(min_k + (max_k - min_k) * j / 3) for j in range(4)]
+        return brightness, kelvins
+
+    @property
     def has_long_press(self) -> bool:
-        return self.long_press_call() is not None
+        return self.long_press_call() is not None or self.supports_light_grid
 
     def update_from_state(self, state: str, attributes: dict | None) -> None:
         self.state = state

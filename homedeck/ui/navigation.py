@@ -42,6 +42,7 @@ class FrameKind(Enum):
     HOME = auto()
     ROOM = auto()
     SECURITY = auto()
+    LIGHT_GRID = auto()
 
 
 @dataclass
@@ -49,6 +50,8 @@ class Frame:
     kind: FrameKind
     room: Room | None = None
     page: int = 0
+    entity: DeviceEntity | None = None  # the light being edited in a LIGHT_GRID
+    held_key: int = 0                   # key that was held to open the grid
 
 
 class ActionKind(Enum):
@@ -56,6 +59,8 @@ class ActionKind(Enum):
     OPEN_SECURITY = auto()
     FLOOR_HEADER = auto()  # non-interactive section label
     ENTITY = auto()
+    GRID_CELL = auto()     # a brightness/color-temp preset in the light grid
+    GRID_SOURCE = auto()   # the held light shown beside the grid; press to close
     BACK = auto()
     PAGE = auto()
     BLANK = auto()
@@ -68,6 +73,7 @@ class Action:
     room: Room | None = None
     entity: DeviceEntity | None = None
     delta: int = 0
+    data: dict | None = None  # GRID_CELL: {"brightness_pct":.., "color_temp_kelvin":..}
 
 
 class Display:
@@ -144,6 +150,10 @@ class Navigation:
             return self.renderer.room(action.room, accent=accent)
         if action.kind is ActionKind.ENTITY:
             return self.renderer.device(action.entity)
+        if action.kind is ActionKind.GRID_CELL:
+            return self.renderer.light_cell(action.data["color_temp_kelvin"], action.data["brightness_pct"])
+        if action.kind is ActionKind.GRID_SOURCE:
+            return self.renderer.device(action.entity)
         if action.kind is ActionKind.BACK:
             return self.renderer.nav("back")
         if action.kind is ActionKind.PAGE:
@@ -156,6 +166,8 @@ class Navigation:
             return self._room_key_map(frame)
         if frame.kind is FrameKind.SECURITY:
             return self._security_key_map(frame)
+        if frame.kind is FrameKind.LIGHT_GRID:
+            return self._light_grid_key_map(frame)
         return self._home_key_map(frame)
 
     def _home_key_map(self, frame: Frame) -> dict[int, Action]:
@@ -195,6 +207,35 @@ class Navigation:
             flat = [a for group in groups for a in group]
             return layout_page(flat, self.display.key_count, {0: Action(ActionKind.BACK)}, frame.page)
         return layout_security(groups, self.display.key_count, cols, frame.page)
+
+    def _light_grid_key_map(self, frame: Frame) -> dict[int, Action]:
+        """4x4 brightness x color-temperature picker in the half opposite the held key.
+
+        Columns = color temperature (warm→cool), rows = brightness (top brightest).
+        The held light stays visible (GRID_SOURCE); pressing it closes the grid.
+        """
+        entity, held = frame.entity, frame.held_key
+        cols = getattr(self.display, "cols", 0)
+        rows = self.display.key_count // cols if cols else 0
+        result: dict[int, Action] = {held: Action(ActionKind.GRID_SOURCE, entity=entity)}
+        if entity is None or cols < 8 or rows < 4:
+            return result  # can't host a 4x4 grid; just show the source/back
+
+        # Place the 4-wide block in the half that doesn't contain the held key.
+        half = cols // 2
+        block = list(range(0, 4)) if (held % cols) >= half else list(range(cols - 4, cols))
+
+        brightness, kelvins = entity.light_grid_levels()
+        brightness_top_down = list(reversed(brightness))  # row 0 = brightest
+        for r in range(4):
+            for c in range(4):
+                key = r * cols + block[c]
+                result[key] = Action(
+                    ActionKind.GRID_CELL,
+                    entity=entity,
+                    data={"brightness_pct": brightness_top_down[r], "color_temp_kelvin": kelvins[c]},
+                )
+        return result
 
     def _collect_security_groups(self) -> list[list[DeviceEntity]]:
         """Locks, then closures, then presence sensors — each sorted, empties dropped."""
@@ -261,25 +302,33 @@ class Navigation:
         if start is None or action is None:
             return
         if action.kind is ActionKind.ENTITY and action.entity is not None:
-            held = time.monotonic() - start
-            self._invoke(action.entity, long=action.entity.has_long_press and held >= LONG_PRESS_S)
-            self._restore_key(key)  # clear any "release to open" feedback
+            entity = action.entity
+            long = entity.has_long_press and (time.monotonic() - start) >= LONG_PRESS_S
+            if long and entity.supports_light_grid:
+                self._open_light_grid(key, entity)  # opens the picker; view changes
+            else:
+                self._invoke(entity, long=long)
+                self._restore_key(key)  # clear any hold feedback
 
     def _arm_hold(self, key: int, entity: DeviceEntity) -> None:
         """Record press time and schedule the armed-feedback render."""
-        timer = threading.Timer(LONG_PRESS_S, self._show_hold_feedback, args=(key,))
+        timer = threading.Timer(LONG_PRESS_S, self._show_hold_feedback, args=(key, entity))
         timer.daemon = True
         with self._lock:
             self._press_start[key] = time.monotonic()
             self._hold_timers[key] = timer
         timer.start()
 
-    def _show_hold_feedback(self, key: int) -> None:
+    def _show_hold_feedback(self, key: int, entity: DeviceEntity) -> None:
         """Fired by the timer: if the key is still held, show it is armed."""
         with self._lock:
             if self._disconnected or key not in self._press_start:
                 return  # released (or disconnected) before the threshold
-            self.display.set_image(key, self.renderer.hold_feedback())
+            if entity.supports_light_grid:
+                img = self.renderer.hold_feedback("palette", "Release for presets")
+            else:
+                img = self.renderer.hold_feedback()  # lock: "Release to open"
+            self.display.set_image(key, img)
 
     def _restore_key(self, key: int) -> None:
         with self._lock:
@@ -300,6 +349,10 @@ class Navigation:
             self._pop()
         elif action.kind is ActionKind.PAGE:
             self._change_page(action.delta)
+        elif action.kind is ActionKind.GRID_CELL:
+            self._apply_light_cell(action)
+        elif action.kind is ActionKind.GRID_SOURCE:
+            self._pop()  # tap the source light to close the picker
         elif action.kind is ActionKind.ENTITY and action.entity is not None:
             if action.entity.is_controllable:
                 self._invoke(action.entity, long=False)
@@ -342,6 +395,23 @@ class Navigation:
         ]
         lights.sort(key=lambda e: e.name.lower())
         return lights
+
+    def _open_light_grid(self, held_key: int, entity: DeviceEntity) -> None:
+        cols = getattr(self.display, "cols", 0)
+        rows = self.display.key_count // cols if cols else 0
+        if cols < 8 or rows < 4:  # deck too small for the picker: just toggle
+            self._invoke(entity, long=False)
+            self._restore_key(held_key)
+            return
+        self._push(Frame(FrameKind.LIGHT_GRID, entity=entity, held_key=held_key))
+
+    def _apply_light_cell(self, action: Action) -> None:
+        call = ("light", "turn_on", action.entity.entity_id, action.data or {})
+        try:
+            self.on_service(call)
+        except Exception as exc:  # noqa: BLE001 - a bad call must not kill the deck thread
+            logger.warning("Service call %s failed: %s", call, exc)
+        self._pop()  # apply and close the picker
 
     def _invoke(self, entity: DeviceEntity, long: bool) -> None:
         call = entity.long_press_call() if long else entity.service_call()

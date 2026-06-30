@@ -18,6 +18,15 @@ META_PATH = ASSETS_DIR / "mdi-meta.json"
 
 GENERIC_FALLBACK = "help-circle"
 
+# Closure device_class -> (open icon, closed icon), chosen by current state.
+CLOSURE_ICONS: dict[str, tuple[str, str]] = {
+    "door": ("door-open", "door"),
+    "garage_door": ("garage-open", "garage"),
+    "garage": ("garage-open", "garage"),
+    "gate": ("gate-open", "gate"),
+    "window": ("window-open-variant", "window-closed-variant"),
+}
+
 # Default icon per domain when the entity has no explicit icon.
 DOMAIN_ICONS: dict[str, str] = {
     "light": "lightbulb",
@@ -93,17 +102,24 @@ def resolve_icon_name(
     device_class: str | None,
     explicit: str | None,
     state: str | None = None,
+    is_open: bool | None = None,
 ) -> str:
     """Pick the best MDI icon name that exists in the font.
 
-    Order: explicit entity icon -> state-aware default (locks) ->
-    (domain, device_class) -> domain -> generic.
+    Order: explicit entity icon -> state-aware default (locks, open/closed
+    closures) -> (domain, device_class) -> domain -> generic.
     """
     codepoints = _codepoints()
 
     explicit_name = _normalize(explicit)
     if explicit_name and explicit_name in codepoints:
         return explicit_name
+
+    if is_open is not None and device_class in CLOSURE_ICONS:
+        open_name, closed_name = CLOSURE_ICONS[device_class]
+        name = open_name if is_open else closed_name
+        if name in codepoints:
+            return name
 
     if domain == "lock":
         s = (state or "").lower()

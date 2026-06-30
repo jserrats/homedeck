@@ -13,6 +13,10 @@ from enum import Enum
 # Domains we surface on the deck.
 TOGGLE_DOMAINS = frozenset({"light", "switch", "input_boolean", "fan", "cover"})
 LOCK_DOMAIN = "lock"  # state-based control + long-press to open
+
+# Door/window/closure device classes (binary_sensor + door-like covers) that
+# should read green when closed and orange when open.
+CLOSURE_DEVICE_CLASSES = frozenset({"door", "garage_door", "garage", "gate", "window", "opening"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
 CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN}
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
@@ -32,8 +36,9 @@ class Status(Enum):
     ON = "on"                    # lights/switches/etc. active (accent)
     OFF = "off"                  # inactive / neutral
     UNAVAILABLE = "unavailable"  # unavailable or error (e.g. a jammed lock)
-    SECURE = "secure"            # a lock that is locked
-    PENDING = "pending"          # a transitional state, e.g. locking/unlocking
+    SECURE = "secure"            # locked, or a closed door/window (green)
+    OPEN = "open"                # an open door/window/closure (orange)
+    PENDING = "pending"          # a transitional state, e.g. locking/unlocking/opening
 
 
 def domain_of(entity_id: str) -> str:
@@ -84,6 +89,35 @@ class DeviceEntity:
         return self.domain in CONTROLLABLE_DOMAINS
 
     @property
+    def is_closure(self) -> bool:
+        """A door/window/closure entity (binary_sensor or door-like cover)."""
+        return self.domain in ("binary_sensor", "cover") and self.device_class in CLOSURE_DEVICE_CLASSES
+
+    def closure_open(self) -> bool | None:
+        """For closures: True if open, False if closed, None if unknown/transitional.
+
+        HA convention: a closure binary_sensor reads ``on`` = open, ``off`` =
+        closed; a cover reads ``open``/``closed``.
+        """
+        if not self.is_closure:
+            return None
+        state = (self.state or "").lower()
+        if state in UNAVAILABLE_STATES:
+            return None
+        if self.domain == "cover":
+            if state == "closed":
+                return False
+            if state in ("opening", "closing"):
+                return None
+            return True  # open
+        # binary_sensor
+        if state == "on":
+            return True
+        if state == "off":
+            return False
+        return None
+
+    @property
     def status(self) -> Status:
         state = (self.state or "").lower()
         if self.domain == LOCK_DOMAIN:
@@ -94,6 +128,18 @@ class DeviceEntity:
             if state in ("locking", "unlocking", "opening"):
                 return Status.PENDING
             if state == "locked":
+                return Status.SECURE
+            return Status.OFF
+        if self.is_closure:
+            # Doors/windows/closures: closed = secure (green), open = orange.
+            if state in UNAVAILABLE_STATES:
+                return Status.UNAVAILABLE
+            if self.domain == "cover" and state in ("opening", "closing"):
+                return Status.PENDING
+            opened = self.closure_open()
+            if opened is True:
+                return Status.OPEN
+            if opened is False:
                 return Status.SECURE
             return Status.OFF
         if state in UNAVAILABLE_STATES:

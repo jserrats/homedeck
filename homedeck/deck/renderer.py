@@ -25,7 +25,8 @@ TEXT = (236, 236, 238)
 ACCENT = (255, 176, 0)       # on (lights/switches/...)
 NEUTRAL = (120, 120, 126)    # off / informational
 UNAVAILABLE = (208, 64, 52)  # unavailable / error
-SECURE = (34, 197, 94)       # a locked lock (green)
+SECURE = (34, 197, 94)       # locked, or a closed door/window (green)
+OPEN = (249, 115, 22)        # an open door/window/closure (orange)
 PENDING = (250, 204, 21)     # transitional, e.g. locking/unlocking (yellow)
 ROOM_ACCENT = (96, 165, 250)   # room folders
 FLOOR_ACCENT = (52, 211, 153)  # floor folders
@@ -36,6 +37,7 @@ STATUS_COLORS = {
     Status.OFF: NEUTRAL,
     Status.UNAVAILABLE: UNAVAILABLE,
     Status.SECURE: SECURE,
+    Status.OPEN: OPEN,
     Status.PENDING: PENDING,
 }
 
@@ -97,7 +99,8 @@ class KeyRenderer:
         img, draw = self._canvas()
         color = STATUS_COLORS[entity.status]
         icon_name = icons.resolve_icon_name(
-            entity.domain, entity.device_class, entity.explicit_icon, state=entity.state
+            entity.domain, entity.device_class, entity.explicit_icon,
+            state=entity.state, is_open=entity.closure_open(),
         )
         glyph = icons.glyph(icon_name)
         value = entity.display_value()

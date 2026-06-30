@@ -14,6 +14,9 @@ auto-populated with that area's devices:
 - **Sensors & climate** — the current value is displayed. Within a room, the read-only
   sensors are grouped into a band at the **bottom rows**, separated from the controllable
   devices in the top rows.
+- **Doors, windows & closures** — door/window/garage/gate sensors (and door-like covers)
+  show **green when closed** and **orange when open**, with the icon switching between the
+  closed and open variant.
 - Each key shows the entity's **HA icon and name**, and the **icon color reflects state**:
   amber = on, grey = off, red = unavailable.
 

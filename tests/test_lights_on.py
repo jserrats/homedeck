@@ -47,12 +47,13 @@ def test_collect_on_lights_only_on_lights_sorted():
     assert ids == ["light.counter", "light.lamp"]
 
 
-def test_lights_on_folder_is_first_on_home():
+def test_lights_on_folder_pinned_to_bottom_row():
     nav, _ = _nav()
-    first = nav._build_key_map()[0]
-    assert first.kind is ActionKind.OPEN_ROOM
-    assert first.room.area_id == LIGHTS_ON_AREA
-    assert first.room.is_dynamic
+    key_map = nav._build_key_map()
+    # 8x4 export grid: bottom row starts at key 24; Lights On is first there.
+    assert key_map[24].kind is ActionKind.OPEN_ROOM
+    assert key_map[24].room.area_id == LIGHTS_ON_AREA
+    assert key_map[24].room.is_dynamic
 
 
 def test_opening_folder_populates_current_on_lights():

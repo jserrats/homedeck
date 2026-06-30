@@ -17,6 +17,9 @@ LOCK_DOMAIN = "lock"  # state-based control + long-press to open
 # Door/window/closure device classes (binary_sensor + door-like covers) that
 # should read green when closed and orange when open.
 CLOSURE_DEVICE_CLASSES = frozenset({"door", "garage_door", "garage", "gate", "window", "opening"})
+
+# binary_sensor device classes that represent presence/motion.
+PRESENCE_DEVICE_CLASSES = frozenset({"motion", "occupancy", "presence", "moving"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
 CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN}
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
@@ -92,6 +95,11 @@ class DeviceEntity:
     def is_closure(self) -> bool:
         """A door/window/closure entity (binary_sensor or door-like cover)."""
         return self.domain in ("binary_sensor", "cover") and self.device_class in CLOSURE_DEVICE_CLASSES
+
+    @property
+    def is_presence(self) -> bool:
+        """A motion/occupancy/presence binary_sensor."""
+        return self.domain == "binary_sensor" and self.device_class in PRESENCE_DEVICE_CLASSES
 
     def closure_open(self) -> bool | None:
         """For closures: True if open, False if closed, None if unknown/transitional.

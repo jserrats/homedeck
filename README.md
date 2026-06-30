@@ -18,11 +18,17 @@ auto-populated with that area's devices:
   show **green when closed** and **orange when open**, with the icon switching between the
   closed and open variant.
 - Each key shows the entity's **HA icon and name**, and the **icon color reflects state**:
-  amber = on, grey = off, red = unavailable.
+  amber = on, grey = off. **Unavailable** devices keep a dim icon and get a small **red
+  warning triangle** in the corner rather than being recolored.
 
-A dynamic **Lights On** folder is always shown first on the home screen: open it to see every
-light that is currently on (across all rooms) and tap to turn any off. It updates live as
-lights change.
+Two special folders are pinned to the **bottom row** of the home screen (rooms/floors fill the
+rows above):
+
+- A dynamic **Lights On** folder: open it to see every light that is currently on (across all
+  rooms) and tap to turn any off. It updates live as lights change.
+- A **Security** folder gathering every lock, door/window/closure and presence
+  (motion/occupancy) entity in the house, **grouped by type with each type in its own column**
+  (locks, then closures, then presence).
 
 Rooms are discovered automatically from HA areas; device→room mapping uses the entity registry
 with a device-registry fallback. Entities hidden in HA (the *Visible* toggle) and

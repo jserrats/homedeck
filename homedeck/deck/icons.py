@@ -59,6 +59,8 @@ DEVICE_CLASS_ICONS: dict[tuple[str, str], str] = {
     ("binary_sensor", "moisture"): "water",
     ("binary_sensor", "smoke"): "smoke-detector",
     ("binary_sensor", "occupancy"): "account",
+    ("binary_sensor", "presence"): "home-account",
+    ("binary_sensor", "moving"): "walk",
     ("binary_sensor", "opening"): "square-outline",
     ("cover", "garage"): "garage",
     ("cover", "shade"): "roller-shade",

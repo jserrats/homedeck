@@ -60,22 +60,21 @@ def test_home_groups_rooms_under_floor_headers():
     key_map = nav._build_key_map()
     sequence = [key_map[k] for k in sorted(key_map)]
 
-    # Lights On first, then a header per floor with its rooms, then an "Other"
-    # header for the floorless room.
-    assert sequence[0].kind is ActionKind.OPEN_ROOM and sequence[0].room.is_dynamic
-
     labels = [
         (a.kind.name, (a.floor.name if a.floor else a.room.name if a.room else None))
         for a in sequence
     ]
+    # Floor-grouped rooms fill the top rows; the special folders are pinned to
+    # the bottom row (keys 24, 25), so they sort last.
     assert labels == [
-        ("OPEN_ROOM", "Lights On"),
         ("FLOOR_HEADER", "Ground Floor"),
         ("OPEN_ROOM", "Kitchen"),
         ("FLOOR_HEADER", "First Floor"),
         ("OPEN_ROOM", "Bedroom"),
         ("FLOOR_HEADER", "Other"),
         ("OPEN_ROOM", "Garage"),
+        ("OPEN_ROOM", "Lights On"),
+        ("OPEN_SECURITY", "Security"),
     ]
 
 

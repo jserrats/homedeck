@@ -28,8 +28,12 @@ UNAVAILABLE = (208, 64, 52)  # unavailable / error
 SECURE = (34, 197, 94)       # locked, or a closed door/window (green)
 OPEN = (249, 115, 22)        # an open door/window/closure (orange)
 PENDING = (250, 204, 21)     # transitional, e.g. locking/unlocking (yellow)
-ROOM_ACCENT = (96, 165, 250)   # room folders
-FLOOR_ACCENT = (52, 211, 153)  # floor folders
+UNAVAILABLE_ICON = (96, 96, 102)  # dim grey icon for unavailable devices
+WARNING = (239, 68, 68)      # red warning-triangle badge
+ROOM_ACCENT = (96, 165, 250)     # room folders
+FLOOR_ACCENT = (52, 211, 153)    # floor folders
+LIGHTS_ACCENT = (255, 176, 0)    # "Lights On" folder
+SECURITY_ACCENT = (168, 85, 247)  # "Security" folder (purple)
 NAV_COLOR = (210, 210, 214)
 
 STATUS_COLORS = {
@@ -97,7 +101,10 @@ class KeyRenderer:
 
     def device(self, entity: DeviceEntity) -> Image.Image:
         img, draw = self._canvas()
-        color = STATUS_COLORS[entity.status]
+        unavailable = entity.status is Status.UNAVAILABLE
+        # Unavailable devices keep a readable dim icon and get a warning badge
+        # instead of being painted red.
+        color = UNAVAILABLE_ICON if unavailable else STATUS_COLORS[entity.status]
         icon_name = icons.resolve_icon_name(
             entity.domain, entity.device_class, entity.explicit_icon,
             state=entity.state, is_open=entity.closure_open(),
@@ -115,17 +122,22 @@ class KeyRenderer:
             # Controllable: large colored icon, name at the bottom.
             self._draw_glyph(draw, glyph, size=int(self.h * 0.46), cy=int(self.h * 0.38), color=color)
             self._draw_label(draw, entity.name, y=int(self.h * 0.66), size=13)
+
+        if unavailable:
+            self._draw_warning_badge(draw)
         return img
 
-    def room(self, room: Room, dynamic: bool = False) -> Image.Image:
+    def _draw_warning_badge(self, draw) -> None:
+        """A small red warning triangle in the top-right corner."""
+        font = self._icon_font(int(self.h * 0.32))
+        draw.text((self.w - 2, 1), icons.glyph("alert"), font=font, fill=WARNING, anchor="rt")
+
+    def room(self, room: Room, accent: tuple[int, int, int] = ROOM_ACCENT) -> Image.Image:
         img, draw = self._canvas()
         icon_name = icons.resolve_icon_name("", None, room.icon) or "door"
         if icon_name == icons.GENERIC_FALLBACK:
             icon_name = "door"  # nicer default for a room/folder than a question mark
-        # Dynamic folders (e.g. "Lights On") use the amber accent to set them
-        # apart from the blue area folders.
-        color = ACCENT if dynamic else ROOM_ACCENT
-        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.42), cy=int(self.h * 0.36), color=color)
+        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.42), cy=int(self.h * 0.36), color=accent)
         self._draw_label(draw, room.name, y=int(self.h * 0.64), size=13)
         return img
 

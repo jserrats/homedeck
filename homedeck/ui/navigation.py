@@ -24,13 +24,15 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Callable
 
+from ..deck import renderer as renderer_mod
 from ..deck.renderer import KeyRenderer
 from ..ha.model import DeviceEntity, Floor, Room, Status
 
 logger = logging.getLogger(__name__)
 
-# Sentinel area id for the virtual "Lights On" folder.
+# Sentinel area ids for the virtual home-screen folders.
 LIGHTS_ON_AREA = "__lights_on__"
+SECURITY_AREA = "__security__"
 
 # Hold at least this long for a press to count as a long press (e.g. open a lock).
 LONG_PRESS_S = 0.5
@@ -39,6 +41,7 @@ LONG_PRESS_S = 0.5
 class FrameKind(Enum):
     HOME = auto()
     ROOM = auto()
+    SECURITY = auto()
 
 
 @dataclass
@@ -50,6 +53,7 @@ class Frame:
 
 class ActionKind(Enum):
     OPEN_ROOM = auto()
+    OPEN_SECURITY = auto()
     FLOOR_HEADER = auto()  # non-interactive section label
     ENTITY = auto()
     BACK = auto()
@@ -105,6 +109,9 @@ class Navigation:
             icon="mdi:lightbulb-on",
             is_dynamic=True,
         )
+        # Virtual folder gathering all locks, closures and presence sensors,
+        # grouped by type (one type per row).
+        self.security_folder = Room(area_id=SECURITY_AREA, name="Security", icon="mdi:shield-home")
 
         self.stack: list[Frame] = [Frame(FrameKind.HOME)]
         self.key_map: dict[int, Action] = {}
@@ -130,8 +137,11 @@ class Navigation:
             return self.renderer.blank()
         if action.kind is ActionKind.FLOOR_HEADER:
             return self.renderer.floor_header(action.floor)
+        if action.kind is ActionKind.OPEN_SECURITY:
+            return self.renderer.room(action.room, accent=renderer_mod.SECURITY_ACCENT)
         if action.kind is ActionKind.OPEN_ROOM:
-            return self.renderer.room(action.room, dynamic=action.room.is_dynamic)
+            accent = renderer_mod.LIGHTS_ACCENT if action.room.is_dynamic else renderer_mod.ROOM_ACCENT
+            return self.renderer.room(action.room, accent=accent)
         if action.kind is ActionKind.ENTITY:
             return self.renderer.device(action.entity)
         if action.kind is ActionKind.BACK:
@@ -144,10 +154,21 @@ class Navigation:
         frame = self.stack[-1]
         if frame.kind is FrameKind.ROOM:
             return self._room_key_map(frame)
-        items = self._items_for(frame)
-        # Any frame below the home frame gets a Back key.
-        fixed: dict[int, Action] = {0: Action(ActionKind.BACK)} if len(self.stack) > 1 else {}
-        return layout_page(items, self.display.key_count, fixed, frame.page)
+        if frame.kind is FrameKind.SECURITY:
+            return self._security_key_map(frame)
+        return self._home_key_map(frame)
+
+    def _home_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Home view: rooms/floors on top, special folders pinned to the bottom row."""
+        content = self._items_for(frame)
+        specials = [
+            Action(ActionKind.OPEN_ROOM, room=self.lights_on_room),
+            Action(ActionKind.OPEN_SECURITY, room=self.security_folder),
+        ]
+        cols = getattr(self.display, "cols", 0)
+        if not cols:  # no grid info: content first, specials at the end
+            return layout_page(content + specials, self.display.key_count, {}, frame.page)
+        return layout_home(content, specials, self.display.key_count, cols, frame.page)
 
     def _room_key_map(self, frame: Frame) -> dict[int, Action]:
         """Room view: controls in the top rows, sensors in a bottom band."""
@@ -163,11 +184,41 @@ class Navigation:
             return layout_page(controls + readouts, self.display.key_count, {0: Action(ActionKind.BACK)}, frame.page)
         return layout_room(controls, readouts, self.display.key_count, cols, frame.page)
 
+    def _security_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Security view: locks, closures and presence, one type per row."""
+        groups = [
+            [Action(ActionKind.ENTITY, entity=e) for e in group]
+            for group in self._collect_security_groups()
+        ]
+        cols = getattr(self.display, "cols", 0)
+        if not cols:  # no grid info: flat sequential, types still contiguous
+            flat = [a for group in groups for a in group]
+            return layout_page(flat, self.display.key_count, {0: Action(ActionKind.BACK)}, frame.page)
+        return layout_security(groups, self.display.key_count, cols, frame.page)
+
+    def _collect_security_groups(self) -> list[list[DeviceEntity]]:
+        """Locks, then closures, then presence sensors — each sorted, empties dropped."""
+        locks, closures, presence = [], [], []
+        for room in self.rooms:
+            for entity in room.entities:
+                if entity.domain == "lock":
+                    locks.append(entity)
+                elif entity.is_closure:
+                    closures.append(entity)
+                elif entity.is_presence:
+                    presence.append(entity)
+        groups = [locks, closures, presence]
+        for group in groups:
+            group.sort(key=lambda e: e.name.lower())
+        return [g for g in groups if g]
+
     def _items_for(self, frame: Frame) -> list[Action]:
         if frame.kind is FrameKind.HOME:
-            items = [Action(ActionKind.OPEN_ROOM, room=self.lights_on_room)]
+            # Rooms (grouped under floor headers when HA has floors). The special
+            # "Lights On"/"Security" folders are added separately, pinned to the
+            # bottom row by _home_key_map.
+            items: list[Action] = []
             if self.floors:
-                # Rooms stay on one screen, grouped under a floor-header tile.
                 for floor in self.floors:
                     items.append(Action(ActionKind.FLOOR_HEADER, floor=floor))
                     items += [Action(ActionKind.OPEN_ROOM, room=r) for r in floor.rooms]
@@ -241,6 +292,8 @@ class Navigation:
     def _dispatch_down(self, action: Action) -> None:
         if action.kind is ActionKind.OPEN_ROOM:
             self._push(Frame(FrameKind.ROOM, room=action.room))
+        elif action.kind is ActionKind.OPEN_SECURITY:
+            self._push(Frame(FrameKind.SECURITY))
         elif action.kind is ActionKind.FLOOR_HEADER:
             return  # labels are not interactive
         elif action.kind is ActionKind.BACK:
@@ -382,6 +435,95 @@ def layout_room(
 
 def _ceil_div(a: int, b: int) -> int:
     return -(-a // b)
+
+
+def layout_home(
+    content: list[Action],
+    specials: list[Action],
+    total_keys: int,
+    cols: int,
+    page: int,
+) -> dict[int, Action]:
+    """Home layout: rooms/floors in the top rows, special folders bottom-left.
+
+    The special folders (Lights On, Security) are pinned to the start of the
+    bottom row so they're always in the same place; room/floor content fills the
+    rows above and paginates there, with Prev/Next on the bottom-right.
+    """
+    rows = total_keys // cols
+    bottom = (rows - 1) * cols  # first key of the bottom row
+
+    if rows < 2:  # single-row deck: just lay everything out sequentially
+        return layout_page(content + specials, total_keys, {}, page)
+
+    result: dict[int, Action] = {}
+    for i, action in enumerate(specials):
+        result[bottom + i] = action
+
+    content_capacity = bottom  # the top rows (keys 0 .. bottom-1)
+    if len(content) <= content_capacity:
+        for key, action in enumerate(content):
+            result[key] = action
+        return result
+
+    page_count = max(1, _ceil_div(len(content), content_capacity))
+    page = max(0, min(page, page_count - 1))
+    start = page * content_capacity
+    for key, action in enumerate(content[start : start + content_capacity]):
+        result[key] = action
+
+    # Pagination lives on the bottom-right, clear of the bottom-left specials.
+    if page > 0:
+        result[total_keys - 2] = Action(ActionKind.PAGE, delta=-1)
+    if page < page_count - 1:
+        result[total_keys - 1] = Action(ActionKind.PAGE, delta=1)
+    return result
+
+
+def layout_security(
+    groups: list[list[Action]],
+    total_keys: int,
+    cols: int,
+    page: int,
+) -> dict[int, Action]:
+    """Lay out the Security view: Back in column 0, one entity type per column.
+
+    Each group (locks / closures / presence) gets its own column, entities
+    stacking top-to-bottom; a group with more than ``rows`` entities wraps into
+    additional columns — so no column ever mixes two types. Column 0 holds Back
+    (and Prev/Next when there are more columns than fit). Falls back to a flat
+    sequential layout on very short decks.
+    """
+    back: dict[int, Action] = {0: Action(ActionKind.BACK)}
+    rows = total_keys // cols
+    content_cols = cols - 1  # column 0 is reserved for Back/navigation
+
+    if rows < 3 or content_cols < 1:  # too small for the banded layout + col-0 nav
+        flat = [a for group in groups for a in group]
+        return layout_page(flat, total_keys, back, page)
+
+    # One "column" per chunk of `rows` entities; a tall group spans several.
+    columns: list[list[Action]] = []
+    for group in groups:
+        for start in range(0, len(group), rows):
+            columns.append(group[start : start + rows])
+
+    result = dict(back)
+    page_count = max(1, _ceil_div(len(columns), content_cols))
+    page = max(0, min(page, page_count - 1))
+
+    if page_count > 1:  # navigation tucked into the bottom of the (empty) column 0
+        if page > 0:
+            result[(rows - 2) * cols] = Action(ActionKind.PAGE, delta=-1)
+        if page < page_count - 1:
+            result[(rows - 1) * cols] = Action(ActionKind.PAGE, delta=1)
+
+    page_columns = columns[page * content_cols : (page + 1) * content_cols]
+    for col_offset, column in enumerate(page_columns):
+        col = 1 + col_offset
+        for row, action in enumerate(column):
+            result[row * cols + col] = action
+    return result
 
 
 def layout_page(items: list[Action], total_keys: int, fixed: dict[int, Action], page: int) -> dict[int, Action]:

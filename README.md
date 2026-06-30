@@ -100,7 +100,30 @@ config.
 `--export` writes one PNG per room (plus the home screen) so you can preview the layout and
 icons without a deck attached.
 
-## Linux / Raspberry Pi setup
+## Docker on a Raspberry Pi (recommended)
+
+A multi-arch image (`linux/amd64` + `linux/arm64`) is built and published to the GitHub
+Container Registry by CI. On a 64-bit Raspberry Pi OS with Docker + Compose:
+
+```bash
+git clone <this repo> homedeck && cd homedeck
+cp .env.example .env          # fill in HA_URL + HA_TOKEN
+# edit docker-compose.yml: replace OWNER in the image with your GitHub user/org
+docker compose up -d          # pulls ghcr.io/OWNER/homedeck and starts it
+docker compose logs -f
+```
+
+The compose file bind-mounts `/dev/bus/usb` and allows USB character devices so the container
+can open the Stream Deck (including hot-plugged decks). `restart: unless-stopped` brings it
+back after reboots or transient HA/USB errors. To build the image on the Pi instead of pulling,
+run `docker compose build`.
+
+The image is published automatically by `.github/workflows/docker-publish.yml` on pushes to
+`main` (tag `latest`) and on `v*.*.*` tags (semver tags). It needs no extra secrets — it uses
+the built-in `GITHUB_TOKEN`. Make the package public (or `docker login ghcr.io` on the Pi) to
+pull it.
+
+## Linux / Raspberry Pi setup (without Docker)
 
 Install the USB libraries and a udev rule so the deck is accessible without root:
 

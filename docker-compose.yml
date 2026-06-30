@@ -1,0 +1,24 @@
+# HomeDeck on a Raspberry Pi.
+#
+#   1. cp .env.example .env   # fill in HA_URL + HA_TOKEN
+#   2. docker compose up -d    # pulls the published image and starts it
+#
+# To build locally instead of pulling:  docker compose build
+services:
+  homedeck:
+    # Replace OWNER with your GitHub user/org (or set HOMEDECK_IMAGE).
+    image: ${HOMEDECK_IMAGE:-ghcr.io/OWNER/homedeck:latest}
+    build: .
+    container_name: homedeck
+    restart: unless-stopped
+    env_file: .env
+
+    # The Stream Deck is a USB HID device. Bind-mount the USB bus and grant
+    # access to USB character devices (major 189) so the container can open it
+    # — including decks plugged in after the container starts.
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+    device_cgroup_rules:
+      - 'c 189:* rmw'
+    # If your kernel/setup still can't open the deck, replace the two keys above
+    # with:  privileged: true

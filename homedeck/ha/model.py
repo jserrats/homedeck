@@ -15,6 +15,9 @@ TOGGLE_DOMAINS = frozenset({"light", "switch", "input_boolean", "fan", "cover"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
 IN_SCOPE_DOMAINS = TOGGLE_DOMAINS | DISPLAY_DOMAINS
 
+# Entity categories that HA tucks away (not shown as primary controls in the UI).
+HIDDEN_ENTITY_CATEGORIES = frozenset({"config", "diagnostic"})
+
 # States that mean "the entity is currently active/on".
 ON_STATES = frozenset({"on", "open", "opening", "home", "playing", "heat", "cool", "auto"})
 OFF_STATES = frozenset({"off", "closed", "closing", "not_home", "idle", "standby"})
@@ -135,7 +138,8 @@ def build_rooms(
 ) -> list[Room]:
     """Assemble rooms from HA registries + current states.
 
-    - Skips hidden/disabled entities and out-of-scope domains.
+    - Skips hidden/disabled entities, diagnostic/config entities, and
+      out-of-scope domains, to mirror what the Home Assistant UI shows.
     - Resolves each entity's area (with device fallback).
     - Sorts rooms alphabetically and entities by name within each room.
 
@@ -157,6 +161,8 @@ def build_rooms(
         if not entity_id:
             continue
         if entry.get("hidden_by") or entry.get("disabled_by"):
+            continue
+        if entry.get("entity_category") in HIDDEN_ENTITY_CATEGORIES:
             continue
         domain = domain_of(entity_id)
         if domain not in IN_SCOPE_DOMAINS:

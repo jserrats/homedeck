@@ -33,11 +33,13 @@ def _registries():
         {"entity_id": "sensor.temp", "area_id": "living"},
         # area via device fallback
         {"entity_id": "light.ceiling", "area_id": None, "device_id": "dev1"},
-        # skipped: hidden / disabled / out of scope / no area
+        # skipped: hidden / disabled / out of scope / no area / diagnostic / config
         {"entity_id": "light.hidden", "area_id": "living", "hidden_by": "user"},
         {"entity_id": "light.disabled", "area_id": "living", "disabled_by": "user"},
         {"entity_id": "media_player.tv", "area_id": "living"},
         {"entity_id": "light.orphan", "area_id": None, "device_id": None},
+        {"entity_id": "sensor.rssi", "area_id": "living", "entity_category": "diagnostic"},
+        {"entity_id": "switch.config", "area_id": "living", "entity_category": "config"},
     ]
     states = {
         "light.lamp": {"state": "on", "attributes": {"friendly_name": "Corner Lamp"}},
@@ -58,9 +60,12 @@ def test_build_rooms_filters_and_groups():
 
     living = next(r for r in rooms if r.area_id == "living")
     living_ids = [e.entity_id for e in living.entities]
-    # hidden/disabled/out-of-scope/orphan excluded; sorted by friendly name:
-    # "Corner Lamp" < "Fan" < "Temp".
+    # hidden/disabled/out-of-scope/orphan/diagnostic/config excluded; sorted by
+    # friendly name: "Corner Lamp" < "Fan" < "Temp".
     assert living_ids == ["light.lamp", "switch.fan", "sensor.temp"]
+    # diagnostic/config entities never appear
+    assert "sensor.rssi" not in living_ids
+    assert "switch.config" not in living_ids
 
     kitchen = next(r for r in rooms if r.area_id == "kitchen")
     assert [e.entity_id for e in kitchen.entities] == ["light.ceiling"]

@@ -88,16 +88,35 @@ def _normalize(name: str | None) -> str | None:
     return name or None
 
 
-def resolve_icon_name(domain: str, device_class: str | None, explicit: str | None) -> str:
+def resolve_icon_name(
+    domain: str,
+    device_class: str | None,
+    explicit: str | None,
+    state: str | None = None,
+) -> str:
     """Pick the best MDI icon name that exists in the font.
 
-    Order: explicit entity icon -> (domain, device_class) -> domain -> generic.
+    Order: explicit entity icon -> state-aware default (locks) ->
+    (domain, device_class) -> domain -> generic.
     """
     codepoints = _codepoints()
 
     explicit_name = _normalize(explicit)
     if explicit_name and explicit_name in codepoints:
         return explicit_name
+
+    if domain == "lock":
+        s = (state or "").lower()
+        if s == "jammed":
+            name = "lock-alert"
+        elif s in ("locking", "unlocking", "opening"):
+            name = "lock-clock"  # change in progress
+        elif s == "locked":
+            name = "lock"
+        else:  # unlocked / open / unknown
+            name = "lock-open-variant"
+        if name in codepoints:
+            return name
 
     if device_class:
         dc_icon = DEVICE_CLASS_ICONS.get((domain, device_class))

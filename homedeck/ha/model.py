@@ -12,8 +12,10 @@ from enum import Enum
 
 # Domains we surface on the deck.
 TOGGLE_DOMAINS = frozenset({"light", "switch", "input_boolean", "fan", "cover"})
+LOCK_DOMAIN = "lock"  # state-based control + long-press to open
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
-IN_SCOPE_DOMAINS = TOGGLE_DOMAINS | DISPLAY_DOMAINS
+CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN}
+IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
 
 # Entity categories that HA tucks away (not shown as primary controls in the UI).
 HIDDEN_ENTITY_CATEGORIES = frozenset({"config", "diagnostic"})
@@ -25,11 +27,13 @@ UNAVAILABLE_STATES = frozenset({"unavailable", "unknown", "none", ""})
 
 
 class Status(Enum):
-    """Coarse status used to pick a key color."""
+    """Visual status used to pick a key color."""
 
-    ON = "on"
-    OFF = "off"
-    UNAVAILABLE = "unavailable"
+    ON = "on"                    # lights/switches/etc. active (accent)
+    OFF = "off"                  # inactive / neutral
+    UNAVAILABLE = "unavailable"  # unavailable or error (e.g. a jammed lock)
+    SECURE = "secure"            # a lock that is locked
+    PENDING = "pending"          # a transitional state, e.g. locking/unlocking
 
 
 def domain_of(entity_id: str) -> str:
@@ -77,11 +81,21 @@ class DeviceEntity:
 
     @property
     def is_controllable(self) -> bool:
-        return self.domain in TOGGLE_DOMAINS
+        return self.domain in CONTROLLABLE_DOMAINS
 
     @property
     def status(self) -> Status:
         state = (self.state or "").lower()
+        if self.domain == LOCK_DOMAIN:
+            # Locked = secure (green); in transition = pending; jammed = alert;
+            # unlocked/open = neutral.
+            if state in UNAVAILABLE_STATES or state == "jammed":
+                return Status.UNAVAILABLE
+            if state in ("locking", "unlocking", "opening"):
+                return Status.PENDING
+            if state == "locked":
+                return Status.SECURE
+            return Status.OFF
         if state in UNAVAILABLE_STATES:
             return Status.UNAVAILABLE
         if state in OFF_STATES:
@@ -115,13 +129,30 @@ class DeviceEntity:
         return None
 
     def service_call(self) -> tuple[str, str, str] | None:
-        """Return (domain, service, entity_id) to call on press, or None.
+        """Return (domain, service, entity_id) for a single press, or None.
 
-        Lights/switches/fans/covers toggle; everything else is display-only.
+        Lights/switches/fans/covers toggle; a lock locks or unlocks depending on
+        its current state; sensors/climate are display-only.
         """
         if self.domain in TOGGLE_DOMAINS:
             return (self.domain, "toggle", self.entity_id)
+        if self.domain == LOCK_DOMAIN:
+            service = "unlock" if (self.state or "").lower() == "locked" else "lock"
+            return (LOCK_DOMAIN, service, self.entity_id)
         return None
+
+    def long_press_call(self) -> tuple[str, str, str] | None:
+        """Return the service for a long press, or None if it has no long action.
+
+        Locks open the door/latch (lock.open) on a long press.
+        """
+        if self.domain == LOCK_DOMAIN:
+            return (LOCK_DOMAIN, "open", self.entity_id)
+        return None
+
+    @property
+    def has_long_press(self) -> bool:
+        return self.long_press_call() is not None
 
     def update_from_state(self, state: str, attributes: dict | None) -> None:
         self.state = state
@@ -135,8 +166,18 @@ class Room:
     area_id: str
     name: str
     icon: str | None = None  # explicit area icon from HA, e.g. "mdi:sofa"
+    floor_id: str | None = None  # HA floor this area belongs to, if any
     entities: list[DeviceEntity] = field(default_factory=list)
     is_dynamic: bool = False  # virtual folder whose contents are recomputed live
+
+
+@dataclass
+class Floor:
+    floor_id: str
+    name: str
+    level: int = 0  # HA floor level; used for ordering (ground = 0)
+    icon: str | None = None
+    rooms: list[Room] = field(default_factory=list)
 
 
 def _entity_friendly_name(entity_id: str, reg_name: str | None, state_attrs: dict) -> str:
@@ -183,6 +224,7 @@ def build_rooms(
             area_id=a["area_id"],
             name=a.get("name") or a["area_id"],
             icon=a.get("icon"),
+            floor_id=a.get("floor_id"),
         )
         for a in areas
         if a.get("area_id")
@@ -222,3 +264,39 @@ def build_rooms(
     for room in rooms:
         room.entities.sort(key=lambda e: e.name.lower())
     return rooms
+
+
+def group_by_floor(floor_entries: list[dict], rooms: list[Room]) -> tuple[list[Floor], list[Room]]:
+    """Distribute rooms into their HA floors.
+
+    Returns ``(floors, unassigned)`` where ``floors`` only includes floors that
+    actually contain rooms, ordered by HA floor level then name, and
+    ``unassigned`` holds rooms with no (known) floor, ordered by name. When the
+    registry is empty (older HA, or no floors configured) ``floors`` is empty
+    and every room ends up in ``unassigned`` — callers fall back to a flat list.
+    """
+    floors_by_id = {
+        f["floor_id"]: Floor(
+            floor_id=f["floor_id"],
+            name=f.get("name") or f["floor_id"],
+            level=f.get("level") or 0,
+            icon=f.get("icon"),
+        )
+        for f in floor_entries
+        if f.get("floor_id")
+    }
+
+    unassigned: list[Room] = []
+    for room in rooms:
+        floor = floors_by_id.get(room.floor_id) if room.floor_id else None
+        if floor is not None:
+            floor.rooms.append(room)
+        else:
+            unassigned.append(room)
+
+    floors = [f for f in floors_by_id.values() if f.rooms]
+    floors.sort(key=lambda f: (f.level, f.name.lower()))
+    for floor in floors:
+        floor.rooms.sort(key=lambda r: r.name.lower())
+    unassigned.sort(key=lambda r: r.name.lower())
+    return floors, unassigned

@@ -57,6 +57,14 @@ class HaClient:
     def get_areas(self) -> list[dict]:
         return self._command("config/area_registry/list")  # type: ignore[return-value]
 
+    def get_floor_registry(self) -> list[dict]:
+        """List HA floors. Returns [] if the running HA is too old to support it."""
+        try:
+            return self._command("config/floor_registry/list")  # type: ignore[return-value]
+        except Exception as exc:  # noqa: BLE001 - floors are optional
+            logger.info("Floor registry unavailable (%s); continuing without floors", exc)
+            return []
+
     def get_entity_registry(self) -> list[dict]:
         return self._command("config/entity_registry/list")  # type: ignore[return-value]
 

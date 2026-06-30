@@ -15,21 +15,31 @@ import threading
 from .config import Config
 from .export import ExportDisplay, export_views
 from .ha.client import HaClient
-from .ha.model import DeviceEntity, Room, build_rooms
+from .ha.model import DeviceEntity, Floor, Room, build_rooms, group_by_floor
 from .ui.navigation import Navigation
 
 logger = logging.getLogger("homedeck")
 
 
-def _load_rooms(client: HaClient) -> list[Room]:
+def _load_model(client: HaClient) -> tuple[list[Room], list[Floor], list[Room]]:
+    """Load rooms and group them by HA floor.
+
+    Returns (all_rooms, floors, unassigned_rooms). ``floors`` is empty when HA
+    has no floors, in which case the home screen shows rooms flat.
+    """
     areas = client.get_areas()
     entity_reg = client.get_entity_registry()
     device_reg = client.get_device_registry()
     states = client.get_states()
     rooms = build_rooms(areas, entity_reg, device_reg, states)
+
+    floors, unassigned = group_by_floor(client.get_floor_registry(), rooms)
     total_entities = sum(len(r.entities) for r in rooms)
-    logger.info("Loaded %d room(s) with %d device(s)", len(rooms), total_entities)
-    return rooms
+    logger.info(
+        "Loaded %d room(s) with %d device(s) across %d floor(s)",
+        len(rooms), total_entities, len(floors),
+    )
+    return rooms, floors, unassigned
 
 
 def _index_entities(rooms: list[Room]) -> dict[str, DeviceEntity]:
@@ -46,7 +56,7 @@ def run_export(config: Config, out_dir: str) -> int:
     client = HaClient(config.ha_url, config.ha_token)
     client.connect()
     try:
-        rooms = _load_rooms(client)
+        rooms, floors, unassigned = _load_model(client)
     finally:
         client.close()
 
@@ -56,7 +66,10 @@ def run_export(config: Config, out_dir: str) -> int:
 
     display = ExportDisplay()
     renderer = KeyRenderer(display.key_size)
-    navigation = Navigation(display, renderer, rooms, on_service=lambda _e: None)
+    navigation = Navigation(
+        display, renderer, rooms, on_service=lambda _e: None,
+        floors=floors, unassigned_rooms=unassigned,
+    )
     written = export_views(rooms, navigation, display, out_dir)
     for path in written:
         logger.info("wrote %s", path)
@@ -69,19 +82,20 @@ def run_deck(config: Config) -> int:
 
     client = HaClient(config.ha_url, config.ha_token)
     client.connect()
-    rooms = _load_rooms(client)
+    rooms, floors, unassigned = _load_model(client)
     if not rooms:
         logger.warning("No rooms with in-scope devices found. Check your HA areas.")
 
     deck = DeckController(brightness=config.brightness)
     renderer = KeyRenderer(deck.key_size)
 
-    def on_service(entity: DeviceEntity) -> None:
-        call = entity.service_call()
-        if call:
-            client.call_service(*call)
+    def on_service(call: tuple[str, str, str]) -> None:
+        client.call_service(*call)
 
-    navigation = Navigation(deck, renderer, rooms, on_service=on_service)
+    navigation = Navigation(
+        deck, renderer, rooms, on_service=on_service,
+        floors=floors, unassigned_rooms=unassigned,
+    )
     entity_index = _index_entities(rooms)
 
     def on_state_changed(entity_id: str, state: str, attributes: dict) -> None:

@@ -6,6 +6,9 @@ Each Home Assistant **Area** becomes a folder on the deck. Open a room and its k
 auto-populated with that area's devices:
 
 - **Lights, switches, fans, covers** — a single press toggles the device.
+- **Locks** — a single press locks/unlocks; a **long press** (hold ≈0.5 s) opens the door
+  (`lock.open`). The padlock is **green** when locked, **grey** when unlocked, a **yellow
+  clock** while locking/unlocking (change in progress), and a **red alert** when jammed.
 - **Sensors & climate** — the current value is displayed.
 - Each key shows the entity's **HA icon and name**, and the **icon color reflects state**:
   amber = on, grey = off, red = unavailable.
@@ -14,9 +17,14 @@ A dynamic **Lights On** folder is always shown first on the home screen: open it
 light that is currently on (across all rooms) and tap to turn any off. It updates live as
 lights change.
 
-Rooms are discovered automatically from HA areas (alphabetical); device→room mapping uses the
-entity registry with a device-registry fallback. Entities hidden in HA (the *Visible* toggle)
-and diagnostic/config entities are skipped, mirroring the HA UI.
+Rooms are discovered automatically from HA areas; device→room mapping uses the entity registry
+with a device-registry fallback. Entities hidden in HA (the *Visible* toggle) and
+diagnostic/config entities are skipped, mirroring the HA UI.
+
+When HA has **floors** configured, the rooms are grouped on the same home screen behind a
+non-interactive floor-header tile per floor (ordered by floor level) — no extra level to drill
+into. Rooms with no floor appear under an "Other" header. If HA has no floors, rooms are listed
+flat.
 
 HomeDeck talks to Home Assistant over the **WebSocket API** using a long-lived token, and
 updates keys live as states change. It runs on Linux (Raspberry Pi/Raspbian), macOS, and

@@ -13,7 +13,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from . import icons
-from ..ha.model import DeviceEntity, Room, Status
+from ..ha.model import DeviceEntity, Floor, Room, Status
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 LABEL_FONT = ASSETS_DIR / "DejaVuSans.ttf"
@@ -22,16 +22,21 @@ VALUE_FONT = ASSETS_DIR / "DejaVuSans-Bold.ttf"
 # Palette
 BG = (16, 16, 18)
 TEXT = (236, 236, 238)
-ACCENT = (255, 176, 0)       # on
+ACCENT = (255, 176, 0)       # on (lights/switches/...)
 NEUTRAL = (120, 120, 126)    # off / informational
-UNAVAILABLE = (208, 64, 52)  # unavailable
-ROOM_ACCENT = (96, 165, 250)  # rooms / folders
+UNAVAILABLE = (208, 64, 52)  # unavailable / error
+SECURE = (34, 197, 94)       # a locked lock (green)
+PENDING = (250, 204, 21)     # transitional, e.g. locking/unlocking (yellow)
+ROOM_ACCENT = (96, 165, 250)   # room folders
+FLOOR_ACCENT = (52, 211, 153)  # floor folders
 NAV_COLOR = (210, 210, 214)
 
 STATUS_COLORS = {
     Status.ON: ACCENT,
     Status.OFF: NEUTRAL,
     Status.UNAVAILABLE: UNAVAILABLE,
+    Status.SECURE: SECURE,
+    Status.PENDING: PENDING,
 }
 
 
@@ -91,7 +96,9 @@ class KeyRenderer:
     def device(self, entity: DeviceEntity) -> Image.Image:
         img, draw = self._canvas()
         color = STATUS_COLORS[entity.status]
-        icon_name = icons.resolve_icon_name(entity.domain, entity.device_class, entity.explicit_icon)
+        icon_name = icons.resolve_icon_name(
+            entity.domain, entity.device_class, entity.explicit_icon, state=entity.state
+        )
         glyph = icons.glyph(icon_name)
         value = entity.display_value()
 
@@ -117,6 +124,18 @@ class KeyRenderer:
         color = ACCENT if dynamic else ROOM_ACCENT
         self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.42), cy=int(self.h * 0.36), color=color)
         self._draw_label(draw, room.name, y=int(self.h * 0.64), size=13)
+        return img
+
+    def floor_header(self, floor: Floor) -> Image.Image:
+        """A non-interactive section label marking the start of a floor's rooms."""
+        bg = (18, 60, 48)  # dark teal so the floor name reads in light text
+        img = Image.new("RGB", (self.w, self.h), bg)
+        draw = ImageDraw.Draw(img)
+        icon_name = icons.resolve_icon_name("", None, floor.icon) or "floor-plan"
+        if icon_name == icons.GENERIC_FALLBACK:
+            icon_name = "floor-plan"
+        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.34), cy=int(self.h * 0.32), color=FLOOR_ACCENT)
+        self._draw_label(draw, floor.name, y=int(self.h * 0.58), size=13, color=(220, 245, 238))
         return img
 
     def nav(self, kind: str) -> Image.Image:

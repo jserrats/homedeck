@@ -19,9 +19,12 @@ from enum import Enum, auto
 from typing import Callable
 
 from ..deck.renderer import KeyRenderer
-from ..ha.model import DeviceEntity, Room
+from ..ha.model import DeviceEntity, Room, Status
 
 logger = logging.getLogger(__name__)
+
+# Sentinel area id for the virtual "Lights On" folder.
+LIGHTS_ON_AREA = "__lights_on__"
 
 
 class View(Enum):
@@ -64,6 +67,15 @@ class Navigation:
         self.rooms = rooms
         self.on_service = on_service
 
+        # Virtual folder, always first on the home screen, listing the lights
+        # that are currently on across every room.
+        self.lights_on_room = Room(
+            area_id=LIGHTS_ON_AREA,
+            name="Lights On",
+            icon="mdi:lightbulb-on",
+            is_dynamic=True,
+        )
+
         self.view = View.HOME
         self.current_room: Room | None = None
         self.page = 0
@@ -87,7 +99,7 @@ class Navigation:
         if action is None or action.kind is ActionKind.BLANK:
             return self.renderer.blank()
         if action.kind is ActionKind.OPEN_ROOM:
-            return self.renderer.room(action.room)
+            return self.renderer.room(action.room, dynamic=action.room.is_dynamic)
         if action.kind is ActionKind.ENTITY:
             return self.renderer.device(action.entity)
         if action.kind is ActionKind.BACK:
@@ -99,7 +111,9 @@ class Navigation:
     def _build_key_map(self) -> dict[int, Action]:
         total = self.display.key_count
         if self.view is View.HOME:
-            items = [Action(ActionKind.OPEN_ROOM, room=r) for r in self.rooms]
+            # The dynamic "Lights On" folder is always listed first.
+            home_rooms = [self.lights_on_room, *self.rooms]
+            items = [Action(ActionKind.OPEN_ROOM, room=r) for r in home_rooms]
             fixed: dict[int, Action] = {}
         else:
             room = self.current_room
@@ -137,9 +151,22 @@ class Navigation:
     def _goto_room(self, room: Room | None) -> None:
         with self._lock:
             self.view = View.ROOM
+            if room is not None and room.is_dynamic:
+                room.entities = self._collect_on_lights()
             self.current_room = room
             self.page = 0
         self.render()
+
+    def _collect_on_lights(self) -> list[DeviceEntity]:
+        """All light entities currently on, across every room, sorted by name."""
+        lights = [
+            entity
+            for room in self.rooms
+            for entity in room.entities
+            if entity.domain == "light" and entity.status is Status.ON
+        ]
+        lights.sort(key=lambda e: e.name.lower())
+        return lights
 
     def _goto_home(self) -> None:
         with self._lock:
@@ -162,10 +189,24 @@ class Navigation:
     # -- live updates -------------------------------------------------------
 
     def refresh_entity(self, entity_id: str) -> None:
-        """Re-render just the key showing ``entity_id``, if it is on screen."""
+        """Re-render the key showing ``entity_id``, if it is on screen.
+
+        While viewing the dynamic "Lights On" folder, a light toggling changes
+        which lights belong there, so the whole view is rebuilt instead.
+        """
         with self._lock:
             if self._disconnected:
                 return
+            viewing_dynamic = (
+                self.view is View.ROOM
+                and self.current_room is not None
+                and self.current_room.is_dynamic
+                and entity_id.startswith("light.")  # only lights change membership
+            )
+        if viewing_dynamic:
+            self._goto_room(self.current_room)  # recompute membership + redraw
+            return
+        with self._lock:
             for key, action in self.key_map.items():
                 if action.kind is ActionKind.ENTITY and action.entity and action.entity.entity_id == entity_id:
                     self.display.set_image(key, self.renderer.device(action.entity))

@@ -107,12 +107,15 @@ class KeyRenderer:
             self._draw_label(draw, entity.name, y=int(self.h * 0.66), size=13)
         return img
 
-    def room(self, room: Room) -> Image.Image:
+    def room(self, room: Room, dynamic: bool = False) -> Image.Image:
         img, draw = self._canvas()
         icon_name = icons.resolve_icon_name("", None, room.icon) or "door"
         if icon_name == icons.GENERIC_FALLBACK:
             icon_name = "door"  # nicer default for a room/folder than a question mark
-        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.42), cy=int(self.h * 0.36), color=ROOM_ACCENT)
+        # Dynamic folders (e.g. "Lights On") use the amber accent to set them
+        # apart from the blue area folders.
+        color = ACCENT if dynamic else ROOM_ACCENT
+        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.42), cy=int(self.h * 0.36), color=color)
         self._draw_label(draw, room.name, y=int(self.h * 0.64), size=13)
         return img
 

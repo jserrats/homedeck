@@ -10,8 +10,13 @@ auto-populated with that area's devices:
 - Each key shows the entity's **HA icon and name**, and the **icon color reflects state**:
   amber = on, grey = off, red = unavailable.
 
+A dynamic **Lights On** folder is always shown first on the home screen: open it to see every
+light that is currently on (across all rooms) and tap to turn any off. It updates live as
+lights change.
+
 Rooms are discovered automatically from HA areas (alphabetical); device→room mapping uses the
-entity registry with a device-registry fallback. Hidden/disabled entities are skipped.
+entity registry with a device-registry fallback. Entities hidden in HA (the *Visible* toggle)
+and diagnostic/config entities are skipped, mirroring the HA UI.
 
 HomeDeck talks to Home Assistant over the **WebSocket API** using a long-lived token, and
 updates keys live as states change. It runs on Linux (Raspberry Pi/Raspbian), macOS, and

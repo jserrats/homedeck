@@ -136,6 +136,7 @@ class Room:
     name: str
     icon: str | None = None  # explicit area icon from HA, e.g. "mdi:sofa"
     entities: list[DeviceEntity] = field(default_factory=list)
+    is_dynamic: bool = False  # virtual folder whose contents are recomputed live
 
 
 def _entity_friendly_name(entity_id: str, reg_name: str | None, state_attrs: dict) -> str:

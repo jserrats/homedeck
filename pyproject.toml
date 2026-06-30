@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "homedeck"
+version = "0.1.0"
+description = "Control Home Assistant from an Elgato Stream Deck XL"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "streamdeck>=0.9.5",
+    "HomeAssistant-API>=5.0.0",
+    "Pillow>=10.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+homedeck = "homedeck.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["homedeck*"]
+
+[tool.setuptools.package-data]
+homedeck = ["assets/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

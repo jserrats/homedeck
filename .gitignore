@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.env
+build/
+dist/
+
+# Vendored fonts/meta are fetched via scripts/fetch_assets.py
+homedeck/assets/materialdesignicons-webfont.ttf
+homedeck/assets/mdi-meta.json
+homedeck/assets/DejaVuSans.ttf
+homedeck/assets/DejaVuSans-Bold.ttf
+
+# Export output
+export/

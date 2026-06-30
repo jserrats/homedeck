@@ -1,0 +1,7 @@
+# Allow non-root users to access Elgato Stream Deck devices (vendor 0fd9).
+# Install on Linux (e.g. Raspberry Pi):
+#   sudo cp deploy/60-streamdeck.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# Then unplug/replug the Stream Deck.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", MODE="0660", GROUP="plugdev", TAG+="uaccess"

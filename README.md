@@ -102,8 +102,10 @@ icons without a deck attached.
 
 ## Docker on a Raspberry Pi (recommended)
 
-A multi-arch image (`linux/amd64` + `linux/arm64`) is built and published to the GitHub
-Container Registry by CI. On a 64-bit Raspberry Pi OS with Docker + Compose:
+A multi-arch image is built and published to the GitHub Container Registry by CI for
+`linux/amd64`, `linux/arm64` (64-bit Raspberry Pi OS) and `linux/arm/v7` (32-bit Raspberry Pi
+OS). 64-bit is recommended where possible (faster, simpler), but 32-bit works too. With
+Docker + Compose on the Pi:
 
 ```bash
 git clone <this repo> homedeck && cd homedeck
@@ -116,7 +118,8 @@ docker compose logs -f
 The compose file bind-mounts `/dev/bus/usb` and allows USB character devices so the container
 can open the Stream Deck (including hot-plugged decks). `restart: unless-stopped` brings it
 back after reboots or transient HA/USB errors. To build the image on the Pi instead of pulling,
-run `docker compose build`.
+run `docker compose build` — on a 32-bit Pi this builds natively (no emulation) and pulls
+prebuilt wheels from piwheels, so it's a good immediate workaround before CI republishes.
 
 The image is published automatically by `.github/workflows/docker-publish.yml` on pushes to
 `main` (tag `latest`) and on `v*.*.*` tags (semver tags). It needs no extra secrets — it uses

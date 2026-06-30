@@ -7,7 +7,7 @@
 services:
   homedeck:
     # Replace OWNER with your GitHub user/org (or set HOMEDECK_IMAGE).
-    image: ${HOMEDECK_IMAGE:-ghcr.io/OWNER/homedeck:latest}
+    image: ${HOMEDECK_IMAGE:-ghcr.io/jserrats/homedeck:latest}
     build: .
     container_name: homedeck
     restart: unless-stopped

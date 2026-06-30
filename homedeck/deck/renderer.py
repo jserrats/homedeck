@@ -52,6 +52,19 @@ class KeyRenderer:
     def _value_font(self, size: int) -> ImageFont.FreeTypeFont:
         return self._font(str(VALUE_FONT), size)
 
+    def _fit_value_font(self, text: str, max_size: int, max_width: int, min_size: int = 9) -> ImageFont.FreeTypeFont:
+        """Largest value font (<= max_size) whose text fits within max_width.
+
+        Prevents long readings like "12345.68 kWh" from being clipped.
+        """
+        size = max_size
+        while size > min_size:
+            font = self._value_font(size)
+            if font.getlength(text) <= max_width:
+                return font
+            size -= 1
+        return self._value_font(min_size)
+
     def _icon_font(self, size: int) -> ImageFont.FreeTypeFont:
         return self._font(str(icons.font_path()), size)
 
@@ -85,13 +98,8 @@ class KeyRenderer:
         if value is not None:
             # Read-only entity: small icon up top, big value, name at the bottom.
             self._draw_glyph(draw, glyph, size=int(self.h * 0.28), cy=int(self.h * 0.22), color=color)
-            draw.text(
-                (self.w / 2, self.h * 0.52),
-                value,
-                font=self._value_font(int(self.h * 0.24)),
-                fill=TEXT,
-                anchor="mm",
-            )
+            value_font = self._fit_value_font(value, max_size=int(self.h * 0.24), max_width=self.w - 8)
+            draw.text((self.w / 2, self.h * 0.52), value, font=value_font, fill=TEXT, anchor="mm")
             self._draw_label(draw, entity.name, y=int(self.h * 0.74), size=11, color=NAV_COLOR, max_lines=1)
         else:
             # Controllable: large colored icon, name at the bottom.

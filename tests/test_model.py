@@ -1,8 +1,48 @@
 from homedeck.ha.model import (
+    DeviceEntity,
     Status,
+    _format_number,
     build_rooms,
     resolve_area_id,
 )
+
+
+def _sensor(state, unit=None, device_class=None):
+    attrs = {}
+    if unit is not None:
+        attrs["unit_of_measurement"] = unit
+    if device_class is not None:
+        attrs["device_class"] = device_class
+    return DeviceEntity(
+        entity_id="sensor.x", name="X", domain="sensor", state=state,
+        attributes=attrs, device_class=device_class,
+    )
+
+
+def test_format_number_strips_float_noise():
+    assert _format_number("78.40000000001") == "78.4"
+    assert _format_number("21.4") == "21.4"
+    assert _format_number("48") == "48"
+    assert _format_number("48.0") == "48"
+    assert _format_number("1234.56") == "1234.56"
+    assert _format_number("12345.678") == "12345.68"  # rounded to 2 dp
+
+
+def test_format_number_passes_through_non_numeric():
+    assert _format_number("playing") == "playing"
+    assert _format_number(None) == "None"
+
+
+def test_display_value_spacing_and_units():
+    assert _sensor("78.40000000001", "cm", "distance").display_value() == "78.4 cm"
+    assert _sensor("48", "%").display_value() == "48%"            # percent attaches
+    assert _sensor("21.4", "°C", "temperature").display_value() == "21.4 °C"
+    assert _sensor("1234.5", "W", "power").display_value() == "1234.5 W"
+
+
+def test_display_value_unavailable():
+    s = _sensor("unavailable", "cm")
+    assert s.display_value() == "—"
 
 
 def test_resolve_area_id_direct():
@@ -87,9 +127,9 @@ def test_status_and_value():
     assert by_id["switch.fan"].status is Status.OFF
     assert by_id["light.ceiling"].status is Status.UNAVAILABLE
 
-    # sensor shows value+unit and is not controllable
+    # sensor shows value+unit (space before unit) and is not controllable
     temp = by_id["sensor.temp"]
-    assert temp.display_value() == "21.4°C"
+    assert temp.display_value() == "21.4 °C"
     assert temp.is_controllable is False
     assert temp.service_call() is None
 

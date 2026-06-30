@@ -36,6 +36,36 @@ def domain_of(entity_id: str) -> str:
     return entity_id.split(".", 1)[0]
 
 
+# Most decimal places to show on a key; HA's own display precision isn't in the
+# state, so we just trim float noise (e.g. 78.40000000001 -> 78.4).
+MAX_DECIMALS = 2
+
+
+def _format_number(raw: object) -> str:
+    """Render a numeric state cleanly; pass non-numeric states through.
+
+    Integers stay integers; floats are rounded to ``MAX_DECIMALS`` with trailing
+    zeros stripped. This removes the long binary-float tails HA sometimes emits.
+    """
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return str(raw)
+    if value.is_integer():
+        return str(int(value))
+    text = f"{round(value, MAX_DECIMALS):.{MAX_DECIMALS}f}".rstrip("0").rstrip(".")
+    return text
+
+
+def _with_unit(value: str, unit: str) -> str:
+    """Join value and unit; space-separated except for percent, like the HA UI."""
+    if not unit:
+        return value
+    if unit == "%":
+        return f"{value}{unit}"
+    return f"{value} {unit}"
+
+
 @dataclass
 class DeviceEntity:
     entity_id: str
@@ -69,17 +99,18 @@ class DeviceEntity:
         """The text shown as the key's main value (sensors/climate), else None.
 
         Controllable devices show only their name + colored icon; read-only
-        entities show their current reading.
+        entities show their current reading, with numbers cleaned up (float
+        noise stripped) and the unit spaced like the HA UI (e.g. "78.4 cm").
         """
         if self.domain == "sensor":
-            unit = self.attributes.get("unit_of_measurement", "")
             if self.status is Status.UNAVAILABLE:
                 return "—"
-            return f"{self.state}{unit}"
+            unit = self.attributes.get("unit_of_measurement", "")
+            return _with_unit(_format_number(self.state), unit)
         if self.domain == "climate":
             current = self.attributes.get("current_temperature")
             if current is not None:
-                return f"{current}°"
+                return f"{_format_number(current)}°"
             return self.state
         return None
 

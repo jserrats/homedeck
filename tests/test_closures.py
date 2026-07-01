@@ -42,10 +42,12 @@ def test_non_closure_binary_sensor_keeps_default_palette():
     assert _bs("motion", "off").status is Status.OFF
 
 
-def test_blind_cover_is_not_treated_as_closure():
-    # window blinds (device_class "blind") are not doors/closures
-    assert _cover("blind", "open").status is Status.ON
-    assert _cover("blind", "closed").status is Status.OFF
+def test_all_covers_use_open_closed_colors():
+    # every cover (even non-door blinds) is green when closed / orange when open
+    assert _cover("blind", "open").status is Status.OPEN
+    assert _cover("blind", "closed").status is Status.SECURE
+    # ...but a blind is still not a security "closure" (excluded from that grouping)
+    assert _cover("blind", "open").is_closure is False
 
 
 def test_closure_open_helper():

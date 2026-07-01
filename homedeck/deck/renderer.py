@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from . import icons
 from ..color import hs_to_rgb, kelvin_to_rgb, scale
-from ..ha.model import CLIMATE_DOMAINS, DeviceEntity, Floor, Room, Status
+from ..ha.model import BUTTON_DOMAINS, CLIMATE_DOMAINS, DeviceEntity, Floor, Room, Status
 from ..ha.weather import ForecastDay, Weather
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
@@ -91,9 +91,10 @@ class KeyRenderer:
         img = Image.new("RGB", (self.w, self.h), BG)
         return img, ImageDraw.Draw(img)
 
-    def _draw_glyph(self, draw, glyph: str, size: int, cy: int, color) -> None:
+    def _draw_glyph(self, draw, glyph: str, size: int, cy: int, color, stroke_width: int = 0, stroke_fill=None) -> None:
         font = self._icon_font(size)
-        draw.text((self.w / 2, cy), glyph, font=font, fill=color, anchor="mm")
+        draw.text((self.w / 2, cy), glyph, font=font, fill=color, anchor="mm",
+                  stroke_width=stroke_width, stroke_fill=stroke_fill)
 
     def _draw_label(self, draw, text: str, *, y: int, size: int, color=TEXT, max_lines: int = 2) -> None:
         font = self._label_font(size)
@@ -132,6 +133,11 @@ class KeyRenderer:
             value_font = self._fit_value_font(value, max_size=int(self.h * 0.24), max_width=self.w - 8)
             draw.text((self.w / 2, self.h * 0.52), value, font=value_font, fill=TEXT, anchor="mm")
             self._draw_label(draw, entity.name, y=int(self.h * 0.74), size=11, color=NAV_COLOR, max_lines=1)
+        elif entity.domain in BUTTON_DOMAINS and not unavailable:
+            # Buttons: black icon with a white outline (looks like a pressable key).
+            self._draw_glyph(draw, glyph, size=int(self.h * 0.46), cy=int(self.h * 0.38),
+                             color=(0, 0, 0), stroke_width=max(2, int(self.h * 0.03)), stroke_fill=(255, 255, 255))
+            self._draw_label(draw, entity.name, y=int(self.h * 0.66), size=13)
         else:
             # Controllable: large colored icon, name at the bottom.
             self._draw_glyph(draw, glyph, size=int(self.h * 0.46), cy=int(self.h * 0.38), color=color)

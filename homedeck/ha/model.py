@@ -163,6 +163,13 @@ class DeviceEntity:
             if state == "locked":
                 return Status.SECURE
             return Status.OFF
+        if self.domain == "cover":
+            # All covers: closed = green, open = orange, moving = pending.
+            if state in UNAVAILABLE_STATES:
+                return Status.UNAVAILABLE
+            if state in ("opening", "closing"):
+                return Status.PENDING
+            return Status.SECURE if state == "closed" else Status.OPEN
         if self.is_closure:
             # Doors/windows/closures: closed = secure (green), open = orange.
             if state in UNAVAILABLE_STATES:

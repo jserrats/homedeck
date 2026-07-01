@@ -10,7 +10,7 @@ auto-populated with that area's devices:
   the columns are **8 colors around the wheel** for RGB lights, or **color temperature across
   the light's full range** for color-temp-only lights. Tap a swatch to apply it and close.
 - **Buttons** (`button` / `input_button`) — a single press fires the button (`.press`). They're
-  stateless, so they always show as actionable (unless unavailable).
+  stateless, and rendered as a black icon with a white outline to look like a pressable key.
 - **Locks** — a single press locks/unlocks; a **long press** (hold ≈0.5 s) opens the door
   (`lock.open`). Once you've held long enough, the key changes to a blue **"Release to open"**
   tile so you know the long-press is armed before you let go. The padlock is **green** when
@@ -19,9 +19,9 @@ auto-populated with that area's devices:
 - **Sensors & climate** — the current value is displayed. Within a room, the read-only
   sensors are grouped into a band at the **bottom rows**, separated from the controllable
   devices in the top rows.
-- **Doors, windows & closures** — door/window/garage/gate sensors (and door-like covers)
-  show **green when closed** and **orange when open**, with the icon switching between the
-  closed and open variant.
+- **Covers, doors & windows** — all covers (blinds, shades, garage doors…) and
+  door/window/garage/gate sensors show **green when closed** and **orange when open** (yellow
+  while moving); door-like ones also switch between the closed and open icon.
 - **Presence / occupancy sensors** — the icon turns **purple** while detecting (grey when
   clear), matching the room's presence dot.
 - **Fans & climate** — the icon reads **sky blue** when active (instead of the amber "on").

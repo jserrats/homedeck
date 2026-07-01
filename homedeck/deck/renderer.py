@@ -112,6 +112,8 @@ class KeyRenderer:
         # tints its icon with its actual color; otherwise the status palette.
         if unavailable:
             color = UNAVAILABLE_ICON
+        elif entity.is_presence and entity.status is Status.ON:
+            color = DOT_PRESENCE  # presence detected -> purple (matches the room dot)
         else:
             color = entity.icon_color() or STATUS_COLORS[entity.status]
         icon_name = icons.resolve_icon_name(

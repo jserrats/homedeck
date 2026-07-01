@@ -40,11 +40,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # piwheels provides prebuilt armv7 wheels; it's ignored on amd64/arm64 (those
-# use PyPI's manylinux wheels). Install deps first so the layer caches.
+# use PyPI's manylinux wheels). A C toolchain is installed just for the pip
+# step (and removed after) so that any small C-extension dependency piwheels is
+# missing a 32-bit wheel for can still compile — Raspberry Pi OS has gcc, but
+# the slim image doesn't, which is why a native Pi build works but the QEMU CI
+# build failed. pydantic-core's Rust build is avoided (piwheels ships that wheel).
 COPY requirements.txt ./
-RUN pip install --no-cache-dir \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && pip install --no-cache-dir \
         --extra-index-url https://www.piwheels.org/simple \
-        -r requirements.txt
+        -r requirements.txt \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # App code, then vendor the fonts/icons (downloaded at build time).
 COPY homedeck ./homedeck

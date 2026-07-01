@@ -9,6 +9,8 @@ auto-populated with that area's devices:
   light, a **long press** opens a full-deck **4×8** preset picker (rows = brightness 100→10%);
   the columns are **8 colors around the wheel** for RGB lights, or **color temperature across
   the light's full range** for color-temp-only lights. Tap a swatch to apply it and close.
+- **Buttons** (`button` / `input_button`) — a single press fires the button (`.press`). They're
+  stateless, so they always show as actionable (unless unavailable).
 - **Locks** — a single press locks/unlocks; a **long press** (hold ≈0.5 s) opens the door
   (`lock.open`). Once you've held long enough, the key changes to a blue **"Release to open"**
   tile so you know the long-press is armed before you let go. The padlock is **green** when

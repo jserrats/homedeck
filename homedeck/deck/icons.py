@@ -37,6 +37,8 @@ DOMAIN_ICONS: dict[str, str] = {
     "climate": "thermostat",
     "sensor": "eye",
     "binary_sensor": "checkbox-blank-circle",
+    "button": "gesture-tap-button",
+    "input_button": "gesture-tap-button",
 }
 
 # More specific defaults keyed by (domain, device_class).
@@ -62,6 +64,9 @@ DEVICE_CLASS_ICONS: dict[tuple[str, str], str] = {
     ("binary_sensor", "presence"): "home-account",
     ("binary_sensor", "moving"): "walk",
     ("binary_sensor", "opening"): "square-outline",
+    ("button", "restart"): "restart",
+    ("button", "update"): "package-up",
+    ("button", "identify"): "crosshairs-question",
     ("cover", "garage"): "garage",
     ("cover", "shade"): "roller-shade",
     ("cover", "curtain"): "curtains",

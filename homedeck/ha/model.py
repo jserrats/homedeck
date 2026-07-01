@@ -215,6 +215,8 @@ class DeviceEntity:
         if self.domain == LOCK_DOMAIN:
             service = "unlock" if (self.state or "").lower() == "locked" else "lock"
             return (LOCK_DOMAIN, service, self.entity_id, {})
+        if self.domain in BUTTON_DOMAINS:
+            return (self.domain, "press", self.entity_id, {})
         return None
 
     def long_press_call(self) -> tuple[str, str, str, dict] | None:

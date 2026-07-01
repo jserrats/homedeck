@@ -149,7 +149,10 @@ class Navigation:
         if action.kind is ActionKind.ENTITY:
             return self.renderer.device(action.entity)
         if action.kind is ActionKind.GRID_CELL:
-            return self.renderer.light_cell(action.data["color_temp_kelvin"], action.data["brightness_pct"])
+            d = action.data
+            if "hs_color" in d:
+                return self.renderer.color_cell(d["hs_color"][0], d["hs_color"][1], d["brightness_pct"])
+            return self.renderer.light_cell(d["color_temp_kelvin"], d["brightness_pct"])
         if action.kind is ActionKind.BACK:
             return self.renderer.nav("back")
         if action.kind is ActionKind.PAGE:
@@ -215,16 +218,22 @@ class Navigation:
         if entity is None or cols < 2 or rows < 2:
             return {}
 
-        brightness, kelvins = entity.light_grid_levels(rows, cols)
+        # RGB lights get a hue picker; color-temp-only lights get a kelvin picker.
+        rgb = entity.supports_rgb_color
+        if rgb:
+            brightness, hues = entity.color_grid_levels(rows, cols)
+        else:
+            brightness, kelvins = entity.light_grid_levels(rows, cols)
         brightness_top_down = list(reversed(brightness))  # row 0 = brightest
+
         result: dict[int, Action] = {}
         for r in range(rows):
             for c in range(cols):
-                result[r * cols + c] = Action(
-                    ActionKind.GRID_CELL,
-                    entity=entity,
-                    data={"brightness_pct": brightness_top_down[r], "color_temp_kelvin": kelvins[c]},
-                )
+                if rgb:
+                    data = {"brightness_pct": brightness_top_down[r], "hs_color": [hues[c], 100]}
+                else:
+                    data = {"brightness_pct": brightness_top_down[r], "color_temp_kelvin": kelvins[c]}
+                result[r * cols + c] = Action(ActionKind.GRID_CELL, entity=entity, data=data)
         return result
 
     def _collect_security_groups(self) -> list[list[DeviceEntity]]:
@@ -294,7 +303,7 @@ class Navigation:
         if action.kind is ActionKind.ENTITY and action.entity is not None:
             entity = action.entity
             long = entity.has_long_press and (time.monotonic() - start) >= LONG_PRESS_S
-            if long and entity.supports_light_grid and self._grid_fits():
+            if long and self._grid_fits() and (entity.supports_rgb_color or entity.supports_light_grid):
                 self._open_light_grid(entity)  # opens the picker; view changes
             else:
                 self._invoke(entity, long=long)
@@ -314,7 +323,7 @@ class Navigation:
         with self._lock:
             if self._disconnected or key not in self._press_start:
                 return  # released (or disconnected) before the threshold
-            if entity.supports_light_grid:
+            if entity.supports_rgb_color or entity.supports_light_grid:
                 img = self.renderer.hold_feedback("palette", "Release for presets")
             else:
                 img = self.renderer.hold_feedback()  # lock: "Release to open"

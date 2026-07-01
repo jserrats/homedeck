@@ -5,10 +5,10 @@ Control [Home Assistant](https://www.home-assistant.io/) from an **Elgato Stream
 Each Home Assistant **Area** becomes a folder on the deck. Open a room and its keys are
 auto-populated with that area's devices:
 
-- **Lights, switches, fans, covers** — a single press toggles the device. For a light that
-  supports **dimming + color temperature**, a **long press** opens a full-deck **4×8** preset
-  picker (rows = brightness 100→10%, columns = color temperature across the light's full
-  range); tap a swatch to apply it and close.
+- **Lights, switches, fans, covers** — a single press toggles the device. For a dimmable
+  light, a **long press** opens a full-deck **4×8** preset picker (rows = brightness 100→10%);
+  the columns are **8 colors around the wheel** for RGB lights, or **color temperature across
+  the light's full range** for color-temp-only lights. Tap a swatch to apply it and close.
 - **Locks** — a single press locks/unlocks; a **long press** (hold ≈0.5 s) opens the door
   (`lock.open`). Once you've held long enough, the key changes to a blue **"Release to open"**
   tile so you know the long-press is armed before you let go. The padlock is **green** when

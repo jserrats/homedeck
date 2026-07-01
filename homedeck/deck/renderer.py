@@ -13,7 +13,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from . import icons
-from ..color import kelvin_to_rgb
+from ..color import hs_to_rgb, kelvin_to_rgb, scale
 from ..ha.model import DeviceEntity, Floor, Room, Status
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
@@ -177,19 +177,28 @@ class KeyRenderer:
         self._draw_label(draw, label, y=int(self.h * 0.64), size=12, color=NAV_COLOR, max_lines=1)
         return img
 
-    def light_cell(self, kelvin: int, brightness_pct: int) -> Image.Image:
-        """A swatch previewing a (color temperature, brightness) light preset."""
-        base = kelvin_to_rgb(kelvin)
+    def _swatch(self, base: tuple[int, int, int], brightness_pct: int, sublabel: str | None) -> Image.Image:
+        """A preset swatch: base color dimmed by brightness, with a % (and optional) label."""
         factor = max(0.14, brightness_pct / 100)  # keep dim cells faintly visible
-        bg = tuple(int(c * factor) for c in base)
+        bg = scale(base, factor)
         img = Image.new("RGB", (self.w, self.h), bg)
         draw = ImageDraw.Draw(img)
         # Dark text on light swatches, light text on dark ones.
         luma = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2]
         fg = (20, 20, 20) if luma > 140 else (245, 245, 245)
-        draw.text((self.w / 2, self.h * 0.40), f"{brightness_pct}%", font=self._value_font(int(self.h * 0.24)), fill=fg, anchor="mm")
-        draw.text((self.w / 2, self.h * 0.72), f"{kelvin}K", font=self._label_font(11), fill=fg, anchor="mm")
+        y = self.h * 0.40 if sublabel else self.h * 0.5
+        draw.text((self.w / 2, y), f"{brightness_pct}%", font=self._value_font(int(self.h * 0.24)), fill=fg, anchor="mm")
+        if sublabel:
+            draw.text((self.w / 2, self.h * 0.72), sublabel, font=self._label_font(11), fill=fg, anchor="mm")
         return img
+
+    def light_cell(self, kelvin: int, brightness_pct: int) -> Image.Image:
+        """A swatch previewing a (color temperature, brightness) preset."""
+        return self._swatch(kelvin_to_rgb(kelvin), brightness_pct, f"{kelvin}K")
+
+    def color_cell(self, hue: float, saturation: float, brightness_pct: int) -> Image.Image:
+        """A swatch previewing an (RGB color, brightness) preset."""
+        return self._swatch(hs_to_rgb(hue, saturation), brightness_pct, None)
 
     def hold_feedback(self, icon_name: str = "door-open", label: str = "Release to open") -> Image.Image:
         """Shown while a long-press is armed (held past the threshold).

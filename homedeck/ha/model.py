@@ -15,6 +15,7 @@ from ..color import hs_to_rgb, kelvin_to_rgb, scale
 # Domains we surface on the deck.
 TOGGLE_DOMAINS = frozenset({"light", "switch", "input_boolean", "fan", "cover"})
 LOCK_DOMAIN = "lock"  # state-based control + long-press to open
+BUTTON_DOMAINS = frozenset({"button", "input_button"})  # momentary press (.press)
 
 # Door/window/closure device classes (binary_sensor + door-like covers) that
 # should read green when closed and orange when open.
@@ -33,7 +34,7 @@ WARM_WHITE = (255, 210, 160)
 # otherwise look like it's on). Covers/locks have their own open/closed colors.
 OFF_INDICATOR_DOMAINS = frozenset({"light", "switch", "fan", "input_boolean"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
-CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN}
+CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
 
 # Entity categories that HA tucks away (not shown as primary controls in the UI).
@@ -145,6 +146,10 @@ class DeviceEntity:
     @property
     def status(self) -> Status:
         state = (self.state or "").lower()
+        if self.domain in BUTTON_DOMAINS:
+            # Stateless: always actionable. Its state is a last-pressed timestamp
+            # (or "unknown" before the first press), so only flag real outages.
+            return Status.UNAVAILABLE if state == "unavailable" else Status.ON
         if self.domain == LOCK_DOMAIN:
             # Locked = secure (green); in transition = pending; jammed = alert;
             # unlocked/open = neutral.
@@ -273,18 +278,28 @@ class DeviceEntity:
         modes = self.attributes.get("supported_color_modes") or []
         return "color_temp" in modes
 
+    @property
+    def supports_rgb_color(self) -> bool:
+        """A light that supports full RGB/HS color."""
+        if self.domain != "light":
+            return False
+        modes = set(self.attributes.get("supported_color_modes") or [])
+        return bool(modes & LIGHT_COLOR_MODES)
+
+    @staticmethod
+    def _brightness_levels(n: int) -> list[int]:
+        low = 10
+        if n <= 1:
+            return [100]
+        return [round(low + (100 - low) * i / (n - 1)) for i in range(n)]
+
     def light_grid_levels(self, n_brightness: int = 4, n_color: int = 8) -> tuple[list[int], list[int]]:
         """Return (brightness_percents, color_temp_kelvins), low→high.
 
         Brightness spans 10→100%; color temperature spans the light's own
         ``min_color_temp_kelvin``→``max_color_temp_kelvin`` (its full range).
         """
-        low = 10
-        if n_brightness <= 1:
-            brightness = [100]
-        else:
-            brightness = [round(low + (100 - low) * i / (n_brightness - 1)) for i in range(n_brightness)]
-
+        brightness = self._brightness_levels(n_brightness)
         min_k = int(self.attributes.get("min_color_temp_kelvin") or 2000)
         max_k = int(self.attributes.get("max_color_temp_kelvin") or 6500)
         if n_color <= 1:
@@ -293,9 +308,18 @@ class DeviceEntity:
             kelvins = [round(min_k + (max_k - min_k) * j / (n_color - 1)) for j in range(n_color)]
         return brightness, kelvins
 
+    def color_grid_levels(self, n_brightness: int = 4, n_color: int = 8) -> tuple[list[int], list[int]]:
+        """Return (brightness_percents, hues), for the RGB picker.
+
+        Hues are spread evenly around the color wheel (0→360°).
+        """
+        brightness = self._brightness_levels(n_brightness)
+        hues = [round(j * 360 / n_color) for j in range(n_color)]
+        return brightness, hues
+
     @property
     def has_long_press(self) -> bool:
-        return self.long_press_call() is not None or self.supports_light_grid
+        return self.long_press_call() is not None or self.supports_light_grid or self.supports_rgb_color
 
     def update_from_state(self, state: str, attributes: dict | None) -> None:
         self.state = state

@@ -192,8 +192,8 @@ class KeyRenderer:
             draw.ellipse([cx - r - 1, y - r - 1, cx + r + 1, y + r + 1], fill=(10, 10, 12))  # outline
             draw.ellipse([cx - r, y - r, cx + r, y + r], fill=color)
 
-    def floor_header(self, floor: Floor) -> Image.Image:
-        """A non-interactive section label marking the start of a floor's rooms."""
+    def floor_header(self, floor: Floor, collapsed: bool = False) -> Image.Image:
+        """A tappable section label for a floor; a chevron shows collapsed/expanded."""
         bg = (18, 60, 48)  # dark teal so the floor name reads in light text
         img = Image.new("RGB", (self.w, self.h), bg)
         draw = ImageDraw.Draw(img)
@@ -202,6 +202,9 @@ class KeyRenderer:
             icon_name = "floor-plan"
         self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.34), cy=int(self.h * 0.32), color=FLOOR_ACCENT)
         self._draw_label(draw, floor.name, y=int(self.h * 0.58), size=13, color=(220, 245, 238))
+        # Chevron: right = collapsed, down = expanded.
+        chevron = icons.glyph("chevron-right" if collapsed else "chevron-down")
+        draw.text((self.w - 3, 2), chevron, font=self._icon_font(int(self.h * 0.24)), fill=(200, 230, 222), anchor="rt")
         return img
 
     def weather_button(self, weather: Weather) -> Image.Image:

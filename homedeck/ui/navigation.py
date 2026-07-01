@@ -129,6 +129,7 @@ class Navigation:
         self.security_folder = Room(area_id=SECURITY_AREA, name="Security", icon="mdi:shield-home")
 
         self.stack: list[Frame] = [Frame(FrameKind.HOME)]
+        self._collapsed_floors: set[str] = set()  # floor_ids whose rooms are hidden
         self.key_map: dict[int, Action] = {}
         self._press_start: dict[int, float] = {}  # key -> press-down time, for long-press keys
         self._hold_timers: dict[int, threading.Timer] = {}  # key -> armed-feedback timer
@@ -151,7 +152,8 @@ class Navigation:
         if action is None or action.kind is ActionKind.BLANK:
             return self.renderer.blank()
         if action.kind is ActionKind.FLOOR_HEADER:
-            return self.renderer.floor_header(action.floor)
+            collapsed = action.floor.floor_id in self._collapsed_floors
+            return self.renderer.floor_header(action.floor, collapsed=collapsed)
         if action.kind is ActionKind.OPEN_SECURITY:
             return self.renderer.room(action.room, accent=renderer_mod.SECURITY_ACCENT)
         if action.kind is ActionKind.OPEN_WEATHER:
@@ -314,10 +316,13 @@ class Navigation:
             if self.floors:
                 for floor in self.floors:
                     items.append(Action(ActionKind.FLOOR_HEADER, floor=floor))
-                    items += [Action(ActionKind.OPEN_ROOM, room=r) for r in floor.rooms]
+                    if floor.floor_id not in self._collapsed_floors:
+                        items += [Action(ActionKind.OPEN_ROOM, room=r) for r in floor.rooms]
                 if self.unassigned_rooms:
-                    items.append(Action(ActionKind.FLOOR_HEADER, floor=Floor("__other__", "Other")))
-                    items += [Action(ActionKind.OPEN_ROOM, room=r) for r in self.unassigned_rooms]
+                    other = Floor("__other__", "Other")
+                    items.append(Action(ActionKind.FLOOR_HEADER, floor=other))
+                    if other.floor_id not in self._collapsed_floors:
+                        items += [Action(ActionKind.OPEN_ROOM, room=r) for r in self.unassigned_rooms]
             else:
                 items += [Action(ActionKind.OPEN_ROOM, room=r) for r in self.rooms]
             return items
@@ -400,7 +405,7 @@ class Navigation:
         elif action.kind in (ActionKind.WEATHER_DAY, ActionKind.WEATHER_CELL):
             return  # forecast tiles are not interactive
         elif action.kind is ActionKind.FLOOR_HEADER:
-            return  # labels are not interactive
+            self._toggle_floor(action.floor)
         elif action.kind is ActionKind.BACK:
             self._pop()
         elif action.kind is ActionKind.PAGE:
@@ -437,6 +442,16 @@ class Navigation:
         with self._lock:
             frame = self.stack[-1]
             frame.page = max(0, frame.page + delta)
+        self.render()
+
+    def _toggle_floor(self, floor: Floor) -> None:
+        """Collapse/expand a floor's rooms on the home screen."""
+        with self._lock:
+            fid = floor.floor_id
+            if fid in self._collapsed_floors:
+                self._collapsed_floors.discard(fid)
+            else:
+                self._collapsed_floors.add(fid)
         self.render()
 
     def _render_room_tile(self, room: Room):

@@ -53,10 +53,10 @@ Each room folder shows small **status dots** in its top-left corner: a **yellow*
 light in the room is on, and a **purple** dot when a presence/occupancy sensor there is
 detecting. They update live.
 
-When HA has **floors** configured, the rooms are grouped on the same home screen behind a
-non-interactive floor-header tile per floor (ordered by floor level) — no extra level to drill
-into. Rooms with no floor appear under an "Other" header. If HA has no floors, rooms are listed
-flat.
+When HA has **floors** configured, the rooms are grouped on the same home screen under a
+floor-header tile per floor (ordered by floor level) — no extra level to drill into. **Tapping
+a floor header collapses/expands** that floor's rooms in place (a chevron shows the state).
+Rooms with no floor appear under an "Other" header. If HA has no floors, rooms are listed flat.
 
 HomeDeck talks to Home Assistant over the **WebSocket API** using a long-lived token, and
 updates keys live as states change. It runs on Linux (Raspberry Pi/Raspbian), macOS, and

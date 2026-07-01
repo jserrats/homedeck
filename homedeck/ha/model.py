@@ -33,6 +33,9 @@ WARM_WHITE = (255, 210, 160)
 # On/off devices that get a clear "off" bar when off (a dim colored light can
 # otherwise look like it's on). Covers/locks have their own open/closed colors.
 OFF_INDICATOR_DOMAINS = frozenset({"light", "switch", "fan", "input_boolean"})
+
+# Climate-related domains whose icon reads sky-blue (not the amber "on") when active.
+CLIMATE_DOMAINS = frozenset({"fan", "climate"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
 CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS

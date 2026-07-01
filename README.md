@@ -24,6 +24,7 @@ auto-populated with that area's devices:
   closed and open variant.
 - **Presence / occupancy sensors** — the icon turns **purple** while detecting (grey when
   clear), matching the room's presence dot.
+- **Fans & climate** — the icon reads **sky blue** when active (instead of the amber "on").
 - Each key shows the entity's **HA icon and name**, and the **icon color reflects state**:
   amber = on, grey = off. A light that supports **dimming, color temperature or color** tints
   its icon with its **actual current color/temperature**, dimmed by its brightness; when a

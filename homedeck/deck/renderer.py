@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from . import icons
 from ..color import hs_to_rgb, kelvin_to_rgb, scale
-from ..ha.model import DeviceEntity, Floor, Room, Status
+from ..ha.model import CLIMATE_DOMAINS, DeviceEntity, Floor, Room, Status
 from ..ha.weather import ForecastDay, Weather
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
@@ -37,6 +37,7 @@ FLOOR_ACCENT = (52, 211, 153)    # floor folders
 LIGHTS_ACCENT = (255, 176, 0)    # "Lights On" folder
 SECURITY_ACCENT = (168, 85, 247)  # "Security" folder (purple)
 WEATHER_ACCENT = (125, 200, 247)  # weather button / forecast (sky blue)
+CLIMATE_ICON = (125, 200, 247)    # active fan / climate icon (sky blue)
 NAV_COLOR = (210, 210, 214)
 DOT_LIGHT = (255, 210, 0)        # room indicator: a light is on (yellow)
 DOT_PRESENCE = (168, 85, 247)    # room indicator: presence detected (purple)
@@ -114,6 +115,8 @@ class KeyRenderer:
             color = UNAVAILABLE_ICON
         elif entity.is_presence and entity.status is Status.ON:
             color = DOT_PRESENCE  # presence detected -> purple (matches the room dot)
+        elif entity.domain in CLIMATE_DOMAINS and entity.status is Status.ON:
+            color = CLIMATE_ICON  # active fan / climate -> sky blue
         else:
             color = entity.icon_color() or STATUS_COLORS[entity.status]
         icon_name = icons.resolve_icon_name(

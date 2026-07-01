@@ -207,12 +207,29 @@ class KeyRenderer:
         return img
 
     def weather_day(self, day: ForecastDay) -> Image.Image:
-        """Forecast tile: weekday, condition icon, high/low temperature."""
+        """Compact forecast tile (small-deck fallback): weekday, icon, high/low."""
         img, draw = self._canvas()
         if day.label:
             self._draw_label(draw, day.label, y=int(self.h * 0.06), size=12, color=NAV_COLOR, max_lines=1)
         self._draw_glyph(draw, icons.glyph(day.icon), size=int(self.h * 0.34), cy=int(self.h * 0.44), color=WEATHER_ACCENT)
         draw.text((self.w / 2, self.h * 0.82), day.temp_text(), font=self._value_font(int(self.h * 0.185)), fill=TEXT, anchor="mm")
+        return img
+
+    # Individual forecast cells for the full-matrix layout (one column per day).
+    def weather_label_cell(self, day: ForecastDay) -> Image.Image:
+        img, draw = self._canvas()
+        draw.text((self.w / 2, self.h / 2), day.label or "—", font=self._value_font(int(self.h * 0.34)), fill=WEATHER_ACCENT, anchor="mm")
+        return img
+
+    def weather_icon_cell(self, day: ForecastDay) -> Image.Image:
+        img, draw = self._canvas()
+        self._draw_glyph(draw, icons.glyph(day.icon), size=int(self.h * 0.6), cy=int(self.h * 0.5), color=WEATHER_ACCENT)
+        return img
+
+    def weather_temp_cell(self, value: str, caption: str) -> Image.Image:
+        img, draw = self._canvas()
+        self._draw_label(draw, caption, y=int(self.h * 0.12), size=11, color=NAV_COLOR, max_lines=1)
+        draw.text((self.w / 2, self.h * 0.58), value, font=self._value_font(int(self.h * 0.34)), fill=TEXT, anchor="mm")
         return img
 
     def nav(self, kind: str) -> Image.Image:

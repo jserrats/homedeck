@@ -63,7 +63,8 @@ class ActionKind(Enum):
     FLOOR_HEADER = auto()  # non-interactive section label
     ENTITY = auto()
     GRID_CELL = auto()     # a brightness/color-temp preset in the light grid
-    WEATHER_DAY = auto()   # non-interactive forecast tile
+    WEATHER_DAY = auto()   # non-interactive forecast tile (compact fallback)
+    WEATHER_CELL = auto()  # one cell of the full-matrix forecast (day/icon/min/max)
     BACK = auto()
     PAGE = auto()
     BLANK = auto()
@@ -157,6 +158,15 @@ class Navigation:
             return self.renderer.weather_button(self.weather)
         if action.kind is ActionKind.WEATHER_DAY:
             return self.renderer.weather_day(action.day)
+        if action.kind is ActionKind.WEATHER_CELL:
+            part = (action.data or {}).get("part")
+            if part == "day":
+                return self.renderer.weather_label_cell(action.day)
+            if part == "icon":
+                return self.renderer.weather_icon_cell(action.day)
+            if part == "min":
+                return self.renderer.weather_temp_cell(action.day.low_text(), "min")
+            return self.renderer.weather_temp_cell(action.day.high_text(), "max")
         if action.kind is ActionKind.OPEN_ROOM:
             if action.room.is_dynamic:  # the "Lights On" folder — no indicator dots
                 return self.renderer.room(action.room, accent=renderer_mod.LIGHTS_ACCENT)
@@ -187,13 +197,27 @@ class Navigation:
         return self._home_key_map(frame)
 
     def _weather_key_map(self, frame: Frame) -> dict[int, Action]:
-        """Fullscreen forecast: Back at key 0, one tile per upcoming day."""
-        result: dict[int, Action] = {0: Action(ActionKind.BACK)}
-        for i, day in enumerate(frame.forecast or []):
-            key = 1 + i
-            if key >= self.display.key_count:
-                break
-            result[key] = Action(ActionKind.WEATHER_DAY, day=day)
+        """Fullscreen forecast: one column per day, rows = day / icon / min / max."""
+        days = frame.forecast or []
+        cols = getattr(self.display, "cols", 0)
+        rows = self.display.key_count // cols if cols else 0
+
+        if cols < 2 or rows < 4:
+            # Small deck: fall back to one compact tile per day, Back at key 0.
+            result: dict[int, Action] = {0: Action(ActionKind.BACK)}
+            for i, day in enumerate(days[: self.display.key_count - 1]):
+                result[1 + i] = Action(ActionKind.WEATHER_DAY, day=day)
+            return result
+
+        # Back stays at key 0 (top-left, like every other view); day columns
+        # start at column 1. Rows within a column: day / icon / max / min.
+        result = {0: Action(ActionKind.BACK)}
+        for i, day in enumerate(days[: cols - 1]):
+            c = i + 1
+            result[0 * cols + c] = Action(ActionKind.WEATHER_CELL, day=day, data={"part": "day"})
+            result[1 * cols + c] = Action(ActionKind.WEATHER_CELL, day=day, data={"part": "icon"})
+            result[2 * cols + c] = Action(ActionKind.WEATHER_CELL, day=day, data={"part": "max"})
+            result[3 * cols + c] = Action(ActionKind.WEATHER_CELL, day=day, data={"part": "min"})
         return result
 
     def _home_key_map(self, frame: Frame) -> dict[int, Action]:
@@ -373,7 +397,7 @@ class Navigation:
             self._push(Frame(FrameKind.SECURITY))
         elif action.kind is ActionKind.OPEN_WEATHER:
             self._open_weather()
-        elif action.kind is ActionKind.WEATHER_DAY:
+        elif action.kind in (ActionKind.WEATHER_DAY, ActionKind.WEATHER_CELL):
             return  # forecast tiles are not interactive
         elif action.kind is ActionKind.FLOOR_HEADER:
             return  # labels are not interactive

@@ -70,8 +70,11 @@ def test_no_weather_button_when_no_weather_entity():
     assert not any(a.kind is ActionKind.OPEN_WEATHER for a in home.values())
 
 
+COLS = 8
+
+
 @requires_assets
-def test_pressing_weather_opens_forecast_view():
+def test_pressing_weather_opens_matrix_forecast():
     nav = _nav()
     nav.key_map = nav._build_key_map()
     wkey = next(k for k, a in nav.key_map.items() if a.kind is ActionKind.OPEN_WEATHER)
@@ -80,17 +83,24 @@ def test_pressing_weather_opens_forecast_view():
     assert nav.stack[-1].kind is FrameKind.WEATHER
 
     view = nav._build_key_map()
+    cells = [a for a in view.values() if a.kind is ActionKind.WEATHER_CELL]
+    assert len(cells) == len(FORECAST) * 4  # one column per day, 4 rows each
+
+    # Back is at key 0 (top-left), day columns start at column 1
     assert view[0].kind is ActionKind.BACK
-    days = [a for a in view.values() if a.kind is ActionKind.WEATHER_DAY]
-    assert len(days) == len(FORECAST)
-    assert view[1].day.temp_text() == "27°/15°"
+
+    # column 1 = first day, top-to-bottom parts: day / icon / max / min
+    assert view[1].data["part"] == "day" and view[1].day.label == "Mon"
+    assert view[COLS * 1 + 1].data["part"] == "icon"
+    assert view[COLS * 2 + 1].data["part"] == "max" and view[COLS * 2 + 1].day.high_text() == "27°"
+    assert view[COLS * 3 + 1].data["part"] == "min" and view[COLS * 3 + 1].day.low_text() == "15°"
 
 
-def test_weather_day_tiles_are_not_interactive():
+def test_weather_cells_are_not_interactive():
     nav = _nav()
     nav.stack = [nav.stack[0], Frame(FrameKind.WEATHER, forecast=parse_forecast(FORECAST))]
     nav.key_map = nav._build_key_map()
-    nav.handle_press(1, True)  # a day tile
+    nav.handle_press(1, True)  # the first day's label cell (key 0 is Back)
     assert nav.stack[-1].kind is FrameKind.WEATHER  # still on the forecast view
 
 

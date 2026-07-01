@@ -37,10 +37,14 @@ class ForecastDay:
     high: float | None
     low: float | None
 
+    def high_text(self) -> str:
+        return f"{round(self.high)}°" if self.high is not None else "—"
+
+    def low_text(self) -> str:
+        return f"{round(self.low)}°" if self.low is not None else "—"
+
     def temp_text(self) -> str:
-        hi = f"{round(self.high)}°" if self.high is not None else "—"
-        lo = f"{round(self.low)}°" if self.low is not None else "—"
-        return f"{hi}/{lo}"
+        return f"{self.high_text()}/{self.low_text()}"
 
 
 @dataclass

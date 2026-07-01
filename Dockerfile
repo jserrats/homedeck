@@ -15,17 +15,25 @@ LABEL org.opencontainers.image.title="HomeDeck" \
 
 # Runtime libraries:
 #  - libusb / libhidapi: the python-elgato-streamdeck USB HID backend
-#  - the rest: shared libs the piwheels Pillow wheel links against (the PyPI
-#    manylinux wheels used on amd64/arm64 bundle these, but piwheels' don't).
+#  - the rest: shared libs the piwheels Pillow wheels link against (the PyPI
+#    manylinux wheels used on amd64/arm64 bundle these; piwheels' 32-bit wheels
+#    don't, so _imaging / _imagingft need them present at runtime).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libusb-1.0-0 \
         libhidapi-libusb0 \
         libjpeg62-turbo \
         libopenjp2-7 \
         libtiff6 \
-        libfreetype6 \
-        liblcms2-2 \
         libwebp7 \
+        libwebpdemux2 \
+        libwebpmux3 \
+        liblcms2-2 \
+        libfreetype6 \
+        libharfbuzz0b \
+        libfribidi0 \
+        libimagequant0 \
+        libraqm0 \
+        libxcb1 \
         zlib1g \
     && rm -rf /var/lib/apt/lists/*
 

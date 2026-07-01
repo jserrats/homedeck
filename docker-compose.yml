@@ -1,14 +1,15 @@
 # HomeDeck on a Raspberry Pi.
 #
 #   1. cp .env.example .env   # fill in HA_URL + HA_TOKEN
-#   2. docker compose up -d    # pulls the published image and starts it
+#   2. docker compose up -d    # pulls the published image (built by GitHub CI) and starts it
 #
-# To build locally instead of pulling:  docker compose build
+# The image is built by GitHub Actions and pulled from ghcr.io — it is never built on the Pi.
+# `docker compose up -d` always pulls the latest published image.
 services:
   homedeck:
-    # Replace OWNER with your GitHub user/org (or set HOMEDECK_IMAGE).
+    # Pulled from the GitHub Actions build; never built on the Pi.
     image: ${HOMEDECK_IMAGE:-ghcr.io/jserrats/homedeck:latest}
-    build: .
+    pull_policy: always
     container_name: homedeck
     restart: unless-stopped
     env_file: .env

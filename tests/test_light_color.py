@@ -67,3 +67,23 @@ def test_brightness_only_light_uses_warm_white():
     light = DeviceEntity("light.dim", "D", "light", "on",
                          attributes={"supported_color_modes": ["brightness"], "brightness": 255})
     assert light.icon_color() == WARM_WHITE
+
+
+# -- off indicator ------------------------------------------------------------
+
+def test_is_off_for_toggle_domains():
+    assert DeviceEntity("light.x", "X", "light", "off").is_off is True
+    assert DeviceEntity("switch.x", "X", "switch", "off").is_off is True
+    assert DeviceEntity("fan.x", "X", "fan", "off").is_off is True
+    # on -> no bar
+    assert DeviceEntity("light.x", "X", "light", "on").is_off is False
+    # unavailable is not "off" (it gets the warning badge instead)
+    assert DeviceEntity("light.x", "X", "light", "unavailable").is_off is False
+
+
+def test_is_off_excludes_locks_covers_sensors():
+    # unlocked lock / closed cover / sensor are not "off" indicators
+    assert DeviceEntity("lock.x", "X", "lock", "unlocked").is_off is False
+    assert DeviceEntity("cover.x", "X", "cover", "closed").is_off is False
+    assert DeviceEntity("sensor.x", "X", "sensor", "0",
+                        attributes={"unit_of_measurement": "W"}).is_off is False

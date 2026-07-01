@@ -130,7 +130,17 @@ class KeyRenderer:
 
         if unavailable:
             self._draw_warning_badge(draw)
+        elif entity.is_off:
+            self._draw_off_bar(draw)
         return img
+
+    def _draw_off_bar(self, draw) -> None:
+        """A grey diagonal bar across the icon marking an off device."""
+        p0 = (self.w * 0.24, self.h * 0.60)
+        p1 = (self.w * 0.76, self.h * 0.14)
+        # Dark underlay first so the grey bar reads over light and dark icons alike.
+        draw.line([p0, p1], fill=(18, 18, 20), width=max(3, int(self.h * 0.11)))
+        draw.line([p0, p1], fill=(188, 188, 194), width=max(2, int(self.h * 0.055)))
 
     def _draw_warning_badge(self, draw) -> None:
         """A small red warning triangle in the top-right corner."""

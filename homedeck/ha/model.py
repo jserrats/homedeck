@@ -28,6 +28,10 @@ LIGHT_COLOR_MODES = frozenset({"hs", "xy", "rgb", "rgbw", "rgbww", "rgbwww"})
 
 # Warm-white fallback tint for a brightness-only light (no color/temp info).
 WARM_WHITE = (255, 210, 160)
+
+# On/off devices that get a clear "off" bar when off (a dim colored light can
+# otherwise look like it's on). Covers/locks have their own open/closed colors.
+OFF_INDICATOR_DOMAINS = frozenset({"light", "switch", "fan", "input_boolean"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
 CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN}
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
@@ -98,6 +102,11 @@ class DeviceEntity:
     @property
     def is_controllable(self) -> bool:
         return self.domain in CONTROLLABLE_DOMAINS
+
+    @property
+    def is_off(self) -> bool:
+        """An on/off device (light/switch/fan/input_boolean) that is currently off."""
+        return self.domain in OFF_INDICATOR_DOMAINS and self.status is Status.OFF
 
     @property
     def is_closure(self) -> bool:

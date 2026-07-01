@@ -38,6 +38,8 @@ LIGHTS_ACCENT = (255, 176, 0)    # "Lights On" folder
 SECURITY_ACCENT = (168, 85, 247)  # "Security" folder (purple)
 WEATHER_ACCENT = (125, 200, 247)  # weather button / forecast (sky blue)
 NAV_COLOR = (210, 210, 214)
+DOT_LIGHT = (255, 210, 0)        # room indicator: a light is on (yellow)
+DOT_PRESENCE = (168, 85, 247)    # room indicator: presence detected (purple)
 
 STATUS_COLORS = {
     Status.ON: ACCENT,
@@ -149,14 +151,35 @@ class KeyRenderer:
         font = self._icon_font(int(self.h * 0.32))
         draw.text((self.w - 2, 1), icons.glyph("alert"), font=font, fill=WARNING, anchor="rt")
 
-    def room(self, room: Room, accent: tuple[int, int, int] = ROOM_ACCENT) -> Image.Image:
+    def room(
+        self,
+        room: Room,
+        accent: tuple[int, int, int] = ROOM_ACCENT,
+        light_on: bool = False,
+        presence: bool = False,
+    ) -> Image.Image:
         img, draw = self._canvas()
         icon_name = icons.resolve_icon_name("", None, room.icon) or "door"
         if icon_name == icons.GENERIC_FALLBACK:
             icon_name = "door"  # nicer default for a room/folder than a question mark
         self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.42), cy=int(self.h * 0.36), color=accent)
         self._draw_label(draw, room.name, y=int(self.h * 0.64), size=13)
+
+        dots = ([DOT_LIGHT] if light_on else []) + ([DOT_PRESENCE] if presence else [])
+        self._draw_indicator_dots(draw, dots)
         return img
+
+    def _draw_indicator_dots(self, draw, colors: list[tuple[int, int, int]]) -> None:
+        """Status dots stacked down the top-left of a tile."""
+        if not colors:
+            return
+        r = max(4, int(self.h * 0.072))
+        cx, cy = int(self.w * 0.16), int(self.h * 0.16)
+        step = int(r * 2 + self.h * 0.06)  # diameter + a slight gap
+        for i, color in enumerate(colors):
+            y = cy + i * step
+            draw.ellipse([cx - r - 1, y - r - 1, cx + r + 1, y + r + 1], fill=(10, 10, 12))  # outline
+            draw.ellipse([cx - r, y - r, cx + r, y + r], fill=color)
 
     def floor_header(self, floor: Floor) -> Image.Image:
         """A non-interactive section label marking the start of a floor's rooms."""

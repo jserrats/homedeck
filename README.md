@@ -46,6 +46,10 @@ Rooms are discovered automatically from HA areas; device→room mapping uses the
 with a device-registry fallback. Entities hidden in HA (the *Visible* toggle) and
 diagnostic/config entities are skipped, mirroring the HA UI.
 
+Each room folder shows small **status dots** in its top-left corner: a **yellow** dot when any
+light in the room is on, and a **purple** dot when a presence/occupancy sensor there is
+detecting. They update live.
+
 When HA has **floors** configured, the rooms are grouped on the same home screen behind a
 non-interactive floor-header tile per floor (ordered by floor level) — no extra level to drill
 into. Rooms with no floor appear under an "Other" header. If HA has no floors, rooms are listed

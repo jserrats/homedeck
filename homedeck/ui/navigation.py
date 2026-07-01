@@ -158,8 +158,9 @@ class Navigation:
         if action.kind is ActionKind.WEATHER_DAY:
             return self.renderer.weather_day(action.day)
         if action.kind is ActionKind.OPEN_ROOM:
-            accent = renderer_mod.LIGHTS_ACCENT if action.room.is_dynamic else renderer_mod.ROOM_ACCENT
-            return self.renderer.room(action.room, accent=accent)
+            if action.room.is_dynamic:  # the "Lights On" folder — no indicator dots
+                return self.renderer.room(action.room, accent=renderer_mod.LIGHTS_ACCENT)
+            return self._render_room_tile(action.room)
         if action.kind is ActionKind.ENTITY:
             return self.renderer.device(action.entity)
         if action.kind is ActionKind.GRID_CELL:
@@ -414,6 +415,12 @@ class Navigation:
             frame.page = max(0, frame.page + delta)
         self.render()
 
+    def _render_room_tile(self, room: Room):
+        """Render a real room folder with its live indicator dots."""
+        light_on = any(e.domain == "light" and e.status is Status.ON for e in room.entities)
+        presence = any(e.is_presence and e.status is Status.ON for e in room.entities)
+        return self.renderer.room(room, accent=renderer_mod.ROOM_ACCENT, light_on=light_on, presence=presence)
+
     def _collect_on_lights(self) -> list[DeviceEntity]:
         """All light entities currently on, across every room, sorted by name."""
         lights = [
@@ -496,6 +503,14 @@ class Navigation:
             self.render()  # _items_for recomputes membership
             return
         with self._lock:
+            if frame.kind is FrameKind.HOME:
+                # A light/presence change updates the indicator dots on its room tile.
+                for key, action in self.key_map.items():
+                    if action.kind is ActionKind.OPEN_ROOM and not action.room.is_dynamic:
+                        member = next((e for e in action.room.entities if e.entity_id == entity_id), None)
+                        if member is not None and (member.domain == "light" or member.is_presence):
+                            self.display.set_image(key, self._render_room_tile(action.room))
+                return
             for key, action in self.key_map.items():
                 if action.kind is ActionKind.ENTITY and action.entity and action.entity.entity_id == entity_id:
                     self.display.set_image(key, self.renderer.device(action.entity))

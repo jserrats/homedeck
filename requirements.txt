@@ -1,4 +1,7 @@
 streamdeck>=0.9.5
 HomeAssistant-API>=5.0.0
-Pillow>=10.0.0
+# Pinned to a version piwheels ships a 32-bit ARM (armv7) wheel for, so the
+# Docker build never has to compile Pillow from source under QEMU. Bump this
+# only to a version listed at https://www.piwheels.org/project/pillow/ for cp311.
+Pillow==12.2.0
 python-dotenv>=1.0.0

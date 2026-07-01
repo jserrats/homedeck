@@ -16,16 +16,28 @@ from .config import Config
 from .export import ExportDisplay, export_views
 from .ha.client import HaClient
 from .ha.model import DeviceEntity, Floor, Room, build_rooms, group_by_floor
+from .ha.weather import Weather
 from .ui.navigation import Navigation
 
 logger = logging.getLogger("homedeck")
 
 
-def _load_model(client: HaClient) -> tuple[list[Room], list[Floor], list[Room]]:
-    """Load rooms and group them by HA floor.
+def _find_weather(states: dict[str, dict], preferred: str | None) -> Weather | None:
+    """Pick the weather entity (the configured one, else the first weather.*)."""
+    candidates = sorted(eid for eid in states if eid.startswith("weather."))
+    entity_id = preferred if (preferred in states) else (candidates[0] if candidates else None)
+    if entity_id is None:
+        return None
+    info = states[entity_id]
+    return Weather.from_state(entity_id, info.get("state", ""), info.get("attributes", {}))
 
-    Returns (all_rooms, floors, unassigned_rooms). ``floors`` is empty when HA
-    has no floors, in which case the home screen shows rooms flat.
+
+def _load_model(client: HaClient, weather_pref: str | None) -> tuple[list[Room], list[Floor], list[Room], Weather | None]:
+    """Load rooms (grouped by HA floor) and the weather entity.
+
+    Returns (all_rooms, floors, unassigned_rooms, weather). ``floors`` is empty
+    when HA has no floors (home screen shows rooms flat); ``weather`` is None
+    when no weather entity exists.
     """
     areas = client.get_areas()
     entity_reg = client.get_entity_registry()
@@ -34,12 +46,13 @@ def _load_model(client: HaClient) -> tuple[list[Room], list[Floor], list[Room]]:
     rooms = build_rooms(areas, entity_reg, device_reg, states)
 
     floors, unassigned = group_by_floor(client.get_floor_registry(), rooms)
+    weather = _find_weather(states, weather_pref)
     total_entities = sum(len(r.entities) for r in rooms)
     logger.info(
-        "Loaded %d room(s) with %d device(s) across %d floor(s)",
-        len(rooms), total_entities, len(floors),
+        "Loaded %d room(s) with %d device(s) across %d floor(s); weather: %s",
+        len(rooms), total_entities, len(floors), weather.entity_id if weather else "none",
     )
-    return rooms, floors, unassigned
+    return rooms, floors, unassigned, weather
 
 
 def _index_entities(rooms: list[Room]) -> dict[str, DeviceEntity]:
@@ -56,7 +69,7 @@ def run_export(config: Config, out_dir: str) -> int:
     client = HaClient(config.ha_url, config.ha_token)
     client.connect()
     try:
-        rooms, floors, unassigned = _load_model(client)
+        rooms, floors, unassigned, weather = _load_model(client, config.weather_entity)
     finally:
         client.close()
 
@@ -68,7 +81,7 @@ def run_export(config: Config, out_dir: str) -> int:
     renderer = KeyRenderer(display.key_size)
     navigation = Navigation(
         display, renderer, rooms, on_service=lambda _e: None,
-        floors=floors, unassigned_rooms=unassigned,
+        floors=floors, unassigned_rooms=unassigned, weather=weather,
     )
     written = export_views(rooms, navigation, display, out_dir)
     for path in written:
@@ -82,7 +95,7 @@ def run_deck(config: Config) -> int:
 
     client = HaClient(config.ha_url, config.ha_token)
     client.connect()
-    rooms, floors, unassigned = _load_model(client)
+    rooms, floors, unassigned, weather = _load_model(client, config.weather_entity)
     if not rooms:
         logger.warning("No rooms with in-scope devices found. Check your HA areas.")
 
@@ -95,10 +108,15 @@ def run_deck(config: Config) -> int:
     navigation = Navigation(
         deck, renderer, rooms, on_service=on_service,
         floors=floors, unassigned_rooms=unassigned,
+        weather=weather, on_forecast=client.get_forecast,
     )
     entity_index = _index_entities(rooms)
+    weather_id = weather.entity_id if weather else None
 
     def on_state_changed(entity_id: str, state: str, attributes: dict) -> None:
+        if entity_id == weather_id:
+            navigation.update_weather(state, attributes)
+            return
         entity = entity_index.get(entity_id)
         if entity is None:
             return

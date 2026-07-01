@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 from . import icons
 from ..color import hs_to_rgb, kelvin_to_rgb, scale
 from ..ha.model import DeviceEntity, Floor, Room, Status
+from ..ha.weather import ForecastDay, Weather
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 LABEL_FONT = ASSETS_DIR / "DejaVuSans.ttf"
@@ -35,6 +36,7 @@ ROOM_ACCENT = (96, 165, 250)     # room folders
 FLOOR_ACCENT = (52, 211, 153)    # floor folders
 LIGHTS_ACCENT = (255, 176, 0)    # "Lights On" folder
 SECURITY_ACCENT = (168, 85, 247)  # "Security" folder (purple)
+WEATHER_ACCENT = (125, 200, 247)  # weather button / forecast (sky blue)
 NAV_COLOR = (210, 210, 214)
 
 STATUS_COLORS = {
@@ -166,6 +168,23 @@ class KeyRenderer:
             icon_name = "floor-plan"
         self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.34), cy=int(self.h * 0.32), color=FLOOR_ACCENT)
         self._draw_label(draw, floor.name, y=int(self.h * 0.58), size=13, color=(220, 245, 238))
+        return img
+
+    def weather_button(self, weather: Weather) -> Image.Image:
+        """Home-screen weather tile: condition icon + outside temperature."""
+        img, draw = self._canvas()
+        self._draw_glyph(draw, icons.glyph(weather.icon), size=int(self.h * 0.30), cy=int(self.h * 0.24), color=WEATHER_ACCENT)
+        draw.text((self.w / 2, self.h * 0.55), weather.temp_text(), font=self._value_font(int(self.h * 0.26)), fill=TEXT, anchor="mm")
+        self._draw_label(draw, "Weather", y=int(self.h * 0.76), size=11, color=NAV_COLOR, max_lines=1)
+        return img
+
+    def weather_day(self, day: ForecastDay) -> Image.Image:
+        """Forecast tile: weekday, condition icon, high/low temperature."""
+        img, draw = self._canvas()
+        if day.label:
+            self._draw_label(draw, day.label, y=int(self.h * 0.06), size=12, color=NAV_COLOR, max_lines=1)
+        self._draw_glyph(draw, icons.glyph(day.icon), size=int(self.h * 0.34), cy=int(self.h * 0.44), color=WEATHER_ACCENT)
+        draw.text((self.w / 2, self.h * 0.82), day.temp_text(), font=self._value_font(int(self.h * 0.185)), fill=TEXT, anchor="mm")
         return img
 
     def nav(self, kind: str) -> Image.Image:

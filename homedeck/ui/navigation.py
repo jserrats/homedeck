@@ -27,6 +27,7 @@ from typing import Callable
 from ..deck import renderer as renderer_mod
 from ..deck.renderer import KeyRenderer
 from ..ha.model import DeviceEntity, Floor, Room, Status
+from ..ha.weather import ForecastDay, Weather, parse_forecast
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class FrameKind(Enum):
     ROOM = auto()
     SECURITY = auto()
     LIGHT_GRID = auto()
+    WEATHER = auto()
 
 
 @dataclass
@@ -51,14 +53,17 @@ class Frame:
     room: Room | None = None
     page: int = 0
     entity: DeviceEntity | None = None  # the light being edited in a LIGHT_GRID
+    forecast: list[ForecastDay] | None = None  # days shown in a WEATHER frame
 
 
 class ActionKind(Enum):
     OPEN_ROOM = auto()
     OPEN_SECURITY = auto()
+    OPEN_WEATHER = auto()
     FLOOR_HEADER = auto()  # non-interactive section label
     ENTITY = auto()
     GRID_CELL = auto()     # a brightness/color-temp preset in the light grid
+    WEATHER_DAY = auto()   # non-interactive forecast tile
     BACK = auto()
     PAGE = auto()
     BLANK = auto()
@@ -72,6 +77,7 @@ class Action:
     entity: DeviceEntity | None = None
     delta: int = 0
     data: dict | None = None  # GRID_CELL: {"brightness_pct":.., "color_temp_kelvin":..}
+    day: ForecastDay | None = None  # WEATHER_DAY tile
 
 
 class Display:
@@ -95,11 +101,15 @@ class Navigation:
         on_service: ServiceCallback,
         floors: list[Floor] | None = None,
         unassigned_rooms: list[Room] | None = None,
+        weather: Weather | None = None,
+        on_forecast: Callable[[str], list[dict]] | None = None,
     ) -> None:
         self.display = display
         self.renderer = renderer
         self.rooms = rooms
         self.on_service = on_service
+        self.weather = weather
+        self.on_forecast = on_forecast
         # When floors exist, the home screen lists floor folders (+ unassigned
         # rooms); otherwise it lists rooms directly.
         self.floors = floors or []
@@ -143,6 +153,10 @@ class Navigation:
             return self.renderer.floor_header(action.floor)
         if action.kind is ActionKind.OPEN_SECURITY:
             return self.renderer.room(action.room, accent=renderer_mod.SECURITY_ACCENT)
+        if action.kind is ActionKind.OPEN_WEATHER:
+            return self.renderer.weather_button(self.weather)
+        if action.kind is ActionKind.WEATHER_DAY:
+            return self.renderer.weather_day(action.day)
         if action.kind is ActionKind.OPEN_ROOM:
             accent = renderer_mod.LIGHTS_ACCENT if action.room.is_dynamic else renderer_mod.ROOM_ACCENT
             return self.renderer.room(action.room, accent=accent)
@@ -167,7 +181,19 @@ class Navigation:
             return self._security_key_map(frame)
         if frame.kind is FrameKind.LIGHT_GRID:
             return self._light_grid_key_map(frame)
+        if frame.kind is FrameKind.WEATHER:
+            return self._weather_key_map(frame)
         return self._home_key_map(frame)
+
+    def _weather_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Fullscreen forecast: Back at key 0, one tile per upcoming day."""
+        result: dict[int, Action] = {0: Action(ActionKind.BACK)}
+        for i, day in enumerate(frame.forecast or []):
+            key = 1 + i
+            if key >= self.display.key_count:
+                break
+            result[key] = Action(ActionKind.WEATHER_DAY, day=day)
+        return result
 
     def _home_key_map(self, frame: Frame) -> dict[int, Action]:
         """Home view: rooms/floors on top, special folders pinned to the bottom row."""
@@ -176,6 +202,8 @@ class Navigation:
             Action(ActionKind.OPEN_ROOM, room=self.lights_on_room),
             Action(ActionKind.OPEN_SECURITY, room=self.security_folder),
         ]
+        if self.weather is not None:
+            specials.append(Action(ActionKind.OPEN_WEATHER))
         cols = getattr(self.display, "cols", 0)
         if not cols:  # no grid info: content first, specials at the end
             return layout_page(content + specials, self.display.key_count, {}, frame.page)
@@ -342,6 +370,10 @@ class Navigation:
             self._push(Frame(FrameKind.ROOM, room=action.room))
         elif action.kind is ActionKind.OPEN_SECURITY:
             self._push(Frame(FrameKind.SECURITY))
+        elif action.kind is ActionKind.OPEN_WEATHER:
+            self._open_weather()
+        elif action.kind is ActionKind.WEATHER_DAY:
+            return  # forecast tiles are not interactive
         elif action.kind is ActionKind.FLOOR_HEADER:
             return  # labels are not interactive
         elif action.kind is ActionKind.BACK:
@@ -400,6 +432,28 @@ class Navigation:
 
     def _open_light_grid(self, entity: DeviceEntity) -> None:
         self._push(Frame(FrameKind.LIGHT_GRID, entity=entity))
+
+    def _open_weather(self) -> None:
+        if self.weather is None:
+            return
+        raw: list[dict] = []
+        if self.on_forecast is not None:
+            try:
+                raw = self.on_forecast(self.weather.entity_id)
+            except Exception as exc:  # noqa: BLE001 - forecast is best-effort
+                logger.warning("Forecast fetch failed: %s", exc)
+        self._push(Frame(FrameKind.WEATHER, forecast=parse_forecast(raw)))
+
+    def update_weather(self, state: str, attributes: dict) -> None:
+        """Refresh the weather entity and re-render its home button if visible."""
+        with self._lock:
+            if self.weather is None or self._disconnected:
+                return
+            self.weather.update(state, attributes)
+            for key, action in self.key_map.items():
+                if action.kind is ActionKind.OPEN_WEATHER:
+                    self.display.set_image(key, self.renderer.weather_button(self.weather))
+                    return
 
     def _apply_light_cell(self, action: Action) -> None:
         call = ("light", "turn_on", action.entity.entity_id, action.data or {})

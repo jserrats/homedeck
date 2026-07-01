@@ -13,6 +13,7 @@ class Config:
     ha_url: str
     ha_token: str
     brightness: int
+    weather_entity: str | None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -41,7 +42,8 @@ class Config:
             )
 
         brightness = _clamp_int(os.environ.get("HOMEDECK_BRIGHTNESS"), default=60, lo=0, hi=100)
-        return cls(ha_url=ha_url, ha_token=ha_token, brightness=brightness)
+        weather_entity = (os.environ.get("HOMEDECK_WEATHER_ENTITY") or "").strip() or None
+        return cls(ha_url=ha_url, ha_token=ha_token, brightness=brightness, weather_entity=weather_entity)
 
 
 def _clamp_int(raw: str | None, *, default: int, lo: int, hi: int) -> int:

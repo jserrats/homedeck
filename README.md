@@ -37,6 +37,10 @@ rows above):
 - A **Security** folder gathering every lock, door/window/closure and presence
   (motion/occupancy) entity in the house, **grouped by type with each type in its own column**
   (locks, then closures, then presence).
+- A **Weather** tile showing the current condition icon and outside temperature from a
+  `weather.*` entity; press it for a **fullscreen forecast** — one tile per upcoming day with
+  its condition icon and high/low temperature. Set `HOMEDECK_WEATHER_ENTITY` to choose which
+  weather entity (defaults to the first one found).
 
 Rooms are discovered automatically from HA areas; device→room mapping uses the entity registry
 with a device-registry fallback. Entities hidden in HA (the *Visible* toggle) and

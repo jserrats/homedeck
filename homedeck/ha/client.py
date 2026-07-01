@@ -123,6 +123,28 @@ class HaClient:
             result[st.entity_id] = {"state": st.state, "attributes": attrs}
         return result
 
+    def get_forecast(self, entity_id: str, forecast_type: str = "daily") -> list[dict]:
+        """Fetch a weather entity's forecast via ``weather.get_forecasts``.
+
+        Returns [] if the entity/HA doesn't support forecast responses.
+        """
+        def run() -> dict:
+            return self._cmd.trigger_service_with_response(  # type: ignore[union-attr]
+                "weather", "get_forecasts", type=forecast_type, entity_id=entity_id
+            )
+
+        try:
+            resp = self._execute(run) or {}
+        except Exception as exc:  # noqa: BLE001 - forecast is best-effort
+            logger.info("Forecast unavailable for %s (%s)", entity_id, exc)
+            return []
+        data = resp.get("response", resp) if isinstance(resp, dict) else {}
+        entry = data.get(entity_id)
+        if entry is None and data:
+            entry = next(iter(data.values()))
+        forecast = (entry or {}).get("forecast", [])
+        return forecast if isinstance(forecast, list) else []
+
     def call_service(self, domain: str, service: str, entity_id: str, data: dict | None = None) -> None:
         self._execute(
             lambda: self._cmd.trigger_service(domain, service, entity_id=entity_id, **(data or {}))  # type: ignore[union-attr]

@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from ..color import hs_to_rgb, kelvin_to_rgb, scale
+
 # Domains we surface on the deck.
 TOGGLE_DOMAINS = frozenset({"light", "switch", "input_boolean", "fan", "cover"})
 LOCK_DOMAIN = "lock"  # state-based control + long-press to open
@@ -20,6 +22,12 @@ CLOSURE_DEVICE_CLASSES = frozenset({"door", "garage_door", "garage", "gate", "wi
 
 # binary_sensor device classes that represent presence/motion.
 PRESENCE_DEVICE_CLASSES = frozenset({"motion", "occupancy", "presence", "moving"})
+
+# HA light color modes that carry an actual RGB/HS color (vs color_temp/brightness).
+LIGHT_COLOR_MODES = frozenset({"hs", "xy", "rgb", "rgbw", "rgbww", "rgbwww"})
+
+# Warm-white fallback tint for a brightness-only light (no color/temp info).
+WARM_WHITE = (255, 210, 160)
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
 CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN}
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
@@ -201,6 +209,48 @@ class DeviceEntity:
         if self.domain == LOCK_DOMAIN:
             return (LOCK_DOMAIN, "open", self.entity_id, {})
         return None
+
+    @property
+    def supports_dynamic_color(self) -> bool:
+        """A light that can dim or change color/temperature (not plain on/off)."""
+        if self.domain != "light":
+            return False
+        modes = set(self.attributes.get("supported_color_modes") or [])
+        return bool(modes - {"onoff", None})
+
+    def icon_color(self) -> tuple[int, int, int] | None:
+        """The icon tint reflecting the light's current color/temperature/brightness.
+
+        Returns None to fall back to the status palette — for non-lights, plain
+        on/off lights, or lights that are off/unavailable.
+        """
+        if not self.supports_dynamic_color or self.status is not Status.ON:
+            return None
+
+        attrs = self.attributes
+        mode = attrs.get("color_mode")
+        rgb, hs = attrs.get("rgb_color"), attrs.get("hs_color")
+        kelvin, mireds = attrs.get("color_temp_kelvin"), attrs.get("color_temp")
+
+        base: tuple[int, int, int] | None = None
+        if mode in LIGHT_COLOR_MODES or (mode is None and (rgb or hs)):
+            if rgb:
+                base = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+            elif hs:
+                base = hs_to_rgb(float(hs[0]), float(hs[1]))
+        elif mode == "color_temp" or (mode is None and (kelvin or mireds)):
+            if kelvin:
+                base = kelvin_to_rgb(int(kelvin))
+            elif mireds:
+                base = kelvin_to_rgb(round(1_000_000 / int(mireds)))
+        if base is None:
+            base = WARM_WHITE  # brightness-only, or color info missing
+
+        brightness = attrs.get("brightness")
+        if brightness is not None:
+            # Keep a floor so dim lights stay visible on the dark key.
+            base = scale(base, max(0.45, int(brightness) / 255))
+        return base
 
     @property
     def supports_light_grid(self) -> bool:

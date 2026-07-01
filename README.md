@@ -21,8 +21,10 @@ auto-populated with that area's devices:
   show **green when closed** and **orange when open**, with the icon switching between the
   closed and open variant.
 - Each key shows the entity's **HA icon and name**, and the **icon color reflects state**:
-  amber = on, grey = off. **Unavailable** devices keep a dim icon and get a small **red
-  warning triangle** in the corner rather than being recolored.
+  amber = on, grey = off. A light that supports **dimming, color temperature or color** tints
+  its icon with its **actual current color/temperature**, dimmed by its brightness.
+  **Unavailable** devices keep a dim icon and get a small **red warning triangle** in the
+  corner rather than being recolored.
 
 Two special folders are pinned to the **bottom row** of the home screen (rooms/floors fill the
 rows above):

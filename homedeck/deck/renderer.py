@@ -13,6 +13,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from . import icons
+from ..color import kelvin_to_rgb
 from ..ha.model import DeviceEntity, Floor, Room, Status
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
@@ -103,8 +104,12 @@ class KeyRenderer:
         img, draw = self._canvas()
         unavailable = entity.status is Status.UNAVAILABLE
         # Unavailable devices keep a readable dim icon and get a warning badge
-        # instead of being painted red.
-        color = UNAVAILABLE_ICON if unavailable else STATUS_COLORS[entity.status]
+        # instead of being painted red. A color/temp/dimmable light that is on
+        # tints its icon with its actual color; otherwise the status palette.
+        if unavailable:
+            color = UNAVAILABLE_ICON
+        else:
+            color = entity.icon_color() or STATUS_COLORS[entity.status]
         icon_name = icons.resolve_icon_name(
             entity.domain, entity.device_class, entity.explicit_icon,
             state=entity.state, is_open=entity.closure_open(),
@@ -164,7 +169,7 @@ class KeyRenderer:
 
     def light_cell(self, kelvin: int, brightness_pct: int) -> Image.Image:
         """A swatch previewing a (color temperature, brightness) light preset."""
-        base = _kelvin_to_rgb(kelvin)
+        base = kelvin_to_rgb(kelvin)
         factor = max(0.14, brightness_pct / 100)  # keep dim cells faintly visible
         bg = tuple(int(c * factor) for c in base)
         img = Image.new("RGB", (self.w, self.h), bg)
@@ -197,34 +202,6 @@ class KeyRenderer:
         self._draw_glyph(draw, icons.glyph("lan-disconnect"), size=int(self.h * 0.34), cy=int(self.h * 0.34), color=color)
         self._draw_label(draw, text, y=int(self.h * 0.60), size=12, color=color, max_lines=2)
         return img
-
-
-def _kelvin_to_rgb(kelvin: int) -> tuple[int, int, int]:
-    """Approximate the RGB white point of a color temperature (Tanner Helland)."""
-    t = max(1000, min(40000, kelvin)) / 100.0
-    if t <= 66:
-        r = 255.0
-        g = 99.4708025861 * _log(t) - 161.1195681661
-    else:
-        r = 329.698727446 * ((t - 60) ** -0.1332047592)
-        g = 288.1221695283 * ((t - 60) ** -0.0755148492)
-    if t >= 66:
-        b = 255.0
-    elif t <= 19:
-        b = 0.0
-    else:
-        b = 138.5177312231 * _log(t - 10) - 305.0447927307
-    return (_clamp8(r), _clamp8(g), _clamp8(b))
-
-
-def _clamp8(v: float) -> int:
-    return max(0, min(255, int(round(v))))
-
-
-def _log(x: float) -> float:
-    import math
-
-    return math.log(x)
 
 
 def _wrap(text: str, font: ImageFont.FreeTypeFont, max_width: int, max_lines: int) -> list[str]:

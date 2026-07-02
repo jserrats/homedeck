@@ -150,6 +150,7 @@ def run_deck(config: Config) -> int:
         navigation.set_connected(connected)
 
     deck.set_callback(navigation.handle_press)
+    deck.set_reconnect_callback(navigation.render)  # redraw when the deck is replugged
     navigation.render()
 
     stop_event = threading.Event()
@@ -160,6 +161,11 @@ def run_deck(config: Config) -> int:
         daemon=True,
     )
     listener.start()
+
+    # Watch for the deck being unplugged/replugged and recover automatically.
+    threading.Thread(
+        target=deck.run_watchdog, args=(stop_event,), name="deck-watchdog", daemon=True
+    ).start()
 
     # Tick active timers once a second so their remaining time counts down live.
     if any(e.is_timer for e in entity_index.values()):

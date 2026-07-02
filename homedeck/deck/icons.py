@@ -39,6 +39,7 @@ DOMAIN_ICONS: dict[str, str] = {
     "binary_sensor": "checkbox-blank-circle",
     "button": "gesture-tap-button",
     "input_button": "gesture-tap-button",
+    "timer": "timer-outline",
 }
 
 # More specific defaults keyed by (domain, device_class).
@@ -125,6 +126,12 @@ def resolve_icon_name(
     if is_open is not None and device_class in CLOSURE_ICONS:
         open_name, closed_name = CLOSURE_ICONS[device_class]
         name = open_name if is_open else closed_name
+        if name in codepoints:
+            return name
+
+    if domain == "timer":
+        s = (state or "").lower()
+        name = "timer-play-outline" if s == "active" else "timer-pause-outline" if s == "paused" else "timer-outline"
         if name in codepoints:
             return name
 

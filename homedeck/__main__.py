@@ -161,6 +161,15 @@ def run_deck(config: Config) -> int:
     )
     listener.start()
 
+    # Tick active timers once a second so their remaining time counts down live.
+    if any(e.is_timer for e in entity_index.values()):
+        def tick_loop() -> None:
+            while not stop_event.is_set():
+                navigation.tick()
+                stop_event.wait(1.0)
+
+        threading.Thread(target=tick_loop, name="timer-ticker", daemon=True).start()
+
     def shutdown(*_args) -> None:
         stop_event.set()
 

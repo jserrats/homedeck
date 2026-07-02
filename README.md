@@ -11,6 +11,9 @@ auto-populated with that area's devices:
   the light's full range** for color-temp-only lights. Tap a swatch to apply it and close.
 - **Buttons** (`button` / `input_button`) — a single press fires the button (`.press`). They're
   stateless, and rendered as a black icon with a white outline to look like a pressable key.
+- **Timers** — the key shows the remaining time. A single press pauses/resumes (or starts an
+  idle timer); a **long press** opens a detail view with the remaining time and
+  **Pause/Resume, Cancel and Finish** buttons.
 - **Locks** — a single press locks/unlocks; a **long press** (hold ≈0.5 s) opens the door
   (`lock.open`). Once you've held long enough, the key changes to a blue **"Release to open"**
   tile so you know the long-press is armed before you let go. The padlock is **green** when

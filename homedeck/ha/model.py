@@ -7,7 +7,9 @@ returned by the WebSocket API into ``Room`` and ``DeviceEntity`` objects.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 
 from ..color import hs_to_rgb, kelvin_to_rgb, scale
@@ -16,6 +18,7 @@ from ..color import hs_to_rgb, kelvin_to_rgb, scale
 TOGGLE_DOMAINS = frozenset({"light", "switch", "input_boolean", "fan", "cover"})
 LOCK_DOMAIN = "lock"  # state-based control + long-press to open
 BUTTON_DOMAINS = frozenset({"button", "input_button"})  # momentary press (.press)
+TIMER_DOMAIN = "timer"  # shows remaining; press pauses/resumes; long-press opens detail
 
 # Door/window/closure device classes (binary_sensor + door-like covers) that
 # should read green when closed and orange when open.
@@ -40,7 +43,7 @@ CLIMATE_DOMAINS = frozenset({"fan", "climate"})
 # Domains whose long-press opens a state-history / logbook view.
 HISTORY_DOMAINS = frozenset({"switch", "binary_sensor"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
-CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS
+CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS | {TIMER_DOMAIN}
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
 
 # Entity categories that HA tucks away (not shown as primary controls in the UI).
@@ -65,6 +68,34 @@ class Status(Enum):
 
 def domain_of(entity_id: str) -> str:
     return entity_id.split(".", 1)[0]
+
+
+def _parse_hms(value) -> int | None:
+    """Parse a HA duration like 'H:MM:SS' (or 'MM:SS') into whole seconds."""
+    if not value:
+        return None
+    try:
+        parts = [int(p) for p in str(value).split(":")]
+    except ValueError:
+        return None
+    if len(parts) == 3:
+        h, m, s = parts
+    elif len(parts) == 2:
+        h, (m, s) = 0, parts
+    elif len(parts) == 1:
+        return parts[0]
+    else:
+        return None
+    return h * 3600 + m * 60 + s
+
+
+def format_duration(seconds: float | None) -> str:
+    """Format seconds as 'M:SS' (or 'H:MM:SS' when >= 1h); '—' if unknown."""
+    if seconds is None:
+        return "—"
+    s = max(0, int(seconds))
+    h, m, sec = s // 3600, (s % 3600) // 60, s % 60
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
 
 
 # Most decimal places to show on a key; HA's own display precision isn't in the
@@ -156,6 +187,14 @@ class DeviceEntity:
             # Stateless: always actionable. Its state is a last-pressed timestamp
             # (or "unknown" before the first press), so only flag real outages.
             return Status.UNAVAILABLE if state == "unavailable" else Status.ON
+        if self.domain == TIMER_DOMAIN:
+            if state in UNAVAILABLE_STATES:
+                return Status.UNAVAILABLE
+            if state == "active":
+                return Status.ON
+            if state == "paused":
+                return Status.PENDING
+            return Status.OFF  # idle
         if self.domain == LOCK_DOMAIN:
             # Locked = secure (green); in transition = pending; jammed = alert;
             # unlocked/open = neutral.
@@ -205,6 +244,8 @@ class DeviceEntity:
         entities show their current reading, with numbers cleaned up (float
         noise stripped) and the unit spaced like the HA UI (e.g. "78.4 cm").
         """
+        if self.domain == TIMER_DOMAIN:
+            return format_duration(self.remaining_seconds())
         if self.domain == "sensor":
             if self.status is Status.UNAVAILABLE:
                 return "—"
@@ -230,7 +271,33 @@ class DeviceEntity:
             return (LOCK_DOMAIN, service, self.entity_id, {})
         if self.domain in BUTTON_DOMAINS:
             return (self.domain, "press", self.entity_id, {})
+        if self.domain == TIMER_DOMAIN:
+            # Pause when running; otherwise start (which also resumes a paused timer).
+            service = "pause" if (self.state or "").lower() == "active" else "start"
+            return (TIMER_DOMAIN, service, self.entity_id, {})
         return None
+
+    @property
+    def is_timer(self) -> bool:
+        return self.domain == TIMER_DOMAIN
+
+    def remaining_seconds(self) -> int | None:
+        """Seconds left on a timer: live from finishes_at when active, else the
+        remaining attribute (paused) or the configured duration (idle)."""
+        attrs = self.attributes
+        state = (self.state or "").lower()
+        if state == "active":
+            finishes_at = attrs.get("finishes_at")
+            if finishes_at:
+                try:
+                    end = datetime.fromisoformat(str(finishes_at).replace("Z", "+00:00")).timestamp()
+                    return max(0, int(end - time.time()))
+                except ValueError:
+                    pass
+            return _parse_hms(attrs.get("remaining"))
+        if state == "paused":
+            return _parse_hms(attrs.get("remaining"))
+        return _parse_hms(attrs.get("duration"))  # idle
 
     def long_press_call(self) -> tuple[str, str, str, dict] | None:
         """Service to run on a long press, or None (e.g. the light grid is not a
@@ -344,6 +411,7 @@ class DeviceEntity:
             or self.supports_light_grid
             or self.supports_rgb_color
             or self.supports_history
+            or self.is_timer
         )
 
     def update_from_state(self, state: str, attributes: dict | None) -> None:

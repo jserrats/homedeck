@@ -48,6 +48,7 @@ class FrameKind(Enum):
     LIGHT_GRID = auto()
     WEATHER = auto()
     HISTORY = auto()
+    TIMER = auto()
 
 
 @dataclass
@@ -71,6 +72,8 @@ class ActionKind(Enum):
     WEATHER_CELL = auto()  # one cell of the full-matrix forecast (day/icon/min/max)
     HISTORY_TITLE = auto() # header of the history view (entity name)
     HISTORY_EVENT = auto() # one timeline entry in the history view
+    TIMER_STATUS = auto()  # remaining-time display in the timer detail view
+    TIMER_ACTION = auto()  # pause/resume/cancel/finish button
     BACK = auto()
     PAGE = auto()
     BLANK = auto()
@@ -195,6 +198,11 @@ class Navigation:
             return self.renderer.history_title(action.entity)
         if action.kind is ActionKind.HISTORY_EVENT:
             return self.renderer.history_event(action.event)
+        if action.kind is ActionKind.TIMER_STATUS:
+            return self.renderer.timer_status(action.entity)
+        if action.kind is ActionKind.TIMER_ACTION:
+            d = action.data or {}
+            return self.renderer.action_button(d["icon"], d["label"], d["color"])
         if action.kind is ActionKind.BACK:
             return self.renderer.nav("back")
         if action.kind is ActionKind.PAGE:
@@ -213,7 +221,31 @@ class Navigation:
             return self._weather_key_map(frame)
         if frame.kind is FrameKind.HISTORY:
             return self._history_key_map(frame)
+        if frame.kind is FrameKind.TIMER:
+            return self._timer_key_map(frame)
         return self._home_key_map(frame)
+
+    def _timer_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Timer detail: Back, remaining-time status, then Pause/Resume, Cancel, Finish."""
+        entity = frame.entity
+        state = (entity.state or "").lower() if entity else ""
+        if state == "active":
+            primary = {"service": "pause", "label": "Pause", "icon": "pause", "color": renderer_mod.ACCENT}
+        else:
+            primary = {
+                "service": "start",
+                "label": "Resume" if state == "paused" else "Start",
+                "icon": "play", "color": renderer_mod.SECURE,
+            }
+        return {
+            0: Action(ActionKind.BACK),
+            1: Action(ActionKind.TIMER_STATUS, entity=entity),
+            2: Action(ActionKind.TIMER_ACTION, entity=entity, data=primary),
+            3: Action(ActionKind.TIMER_ACTION, entity=entity,
+                      data={"service": "cancel", "label": "Cancel", "icon": "close", "color": renderer_mod.UNAVAILABLE}),
+            4: Action(ActionKind.TIMER_ACTION, entity=entity,
+                      data={"service": "finish", "label": "Finish", "icon": "flag-checkered", "color": renderer_mod.WEATHER_ACCENT}),
+        }
 
     def _history_key_map(self, frame: Frame) -> dict[int, Action]:
         """History view: Back, an entity-name header, then newest-first events."""
@@ -393,6 +425,8 @@ class Navigation:
                 self._open_light_grid(entity)  # opens the picker; view changes
             elif long and entity.supports_history:
                 self._open_history(entity)  # opens the history view; view changes
+            elif long and entity.is_timer:
+                self._open_timer(entity)  # opens the timer detail view; view changes
             elif entity.is_controllable:
                 self._invoke(entity, long=long)
                 self._restore_key(key)  # clear any hold feedback
@@ -417,6 +451,8 @@ class Navigation:
                 img = self.renderer.hold_feedback("palette", "Release for presets")
             elif entity.supports_history:
                 img = self.renderer.hold_feedback("history", "Release for history")
+            elif entity.is_timer:
+                img = self.renderer.hold_feedback("timer-cog", "Release for timer")
             else:
                 img = self.renderer.hold_feedback()  # lock: "Release to open"
             self.display.set_image(key, img)
@@ -437,8 +473,9 @@ class Navigation:
         elif action.kind is ActionKind.OPEN_WEATHER:
             self._open_weather()
         elif action.kind in (ActionKind.WEATHER_DAY, ActionKind.WEATHER_CELL,
-                             ActionKind.HISTORY_TITLE, ActionKind.HISTORY_EVENT):
-            return  # forecast/history tiles are not interactive
+                             ActionKind.HISTORY_TITLE, ActionKind.HISTORY_EVENT,
+                             ActionKind.TIMER_STATUS):
+            return  # forecast/history/timer-status tiles are not interactive
         elif action.kind is ActionKind.FLOOR_HEADER:
             self._toggle_floor(action.floor)
         elif action.kind is ActionKind.BACK:
@@ -447,6 +484,8 @@ class Navigation:
             self._change_page(action.delta)
         elif action.kind is ActionKind.GRID_CELL:
             self._apply_light_cell(action)
+        elif action.kind is ActionKind.TIMER_ACTION:
+            self._invoke_timer(action)
         elif action.kind is ActionKind.ENTITY and action.entity is not None:
             if action.entity.is_controllable:
                 self._invoke(action.entity, long=False)
@@ -534,6 +573,17 @@ class Navigation:
                 logger.warning("Logbook fetch failed for %s: %s", entity.entity_id, exc)
         self._push(Frame(FrameKind.HISTORY, entity=entity, history=parse_logbook(raw, self.tz)))
 
+    def _open_timer(self, entity: DeviceEntity) -> None:
+        self._push(Frame(FrameKind.TIMER, entity=entity))
+
+    def _invoke_timer(self, action: Action) -> None:
+        d = action.data or {}
+        call = ("timer", d.get("service"), action.entity.entity_id, {})
+        try:
+            self.on_service(call)  # the resulting state change re-renders the view
+        except Exception as exc:  # noqa: BLE001 - a bad call must not kill the deck thread
+            logger.warning("Timer service %s failed: %s", call, exc)
+
     def update_weather(self, state: str, attributes: dict) -> None:
         """Refresh the weather entity and re-render its home button if visible."""
         with self._lock:
@@ -582,8 +632,14 @@ class Navigation:
                 and frame.room.is_dynamic
                 and entity_id.startswith("light.")  # only lights change membership
             )
-        if viewing_dynamic:
-            self.render()  # _items_for recomputes membership
+            # The open timer detail view rebuilds when its timer changes.
+            viewing_timer = (
+                frame.kind is FrameKind.TIMER
+                and frame.entity is not None
+                and frame.entity.entity_id == entity_id
+            )
+        if viewing_dynamic or viewing_timer:
+            self.render()  # rebuild the view with the new state
             return
         with self._lock:
             if frame.kind is FrameKind.HOME:
@@ -598,6 +654,30 @@ class Navigation:
                 if action.kind is ActionKind.ENTITY and action.entity and action.entity.entity_id == entity_id:
                     self.display.set_image(key, self.renderer.device(action.entity))
                     return
+
+    def tick(self) -> None:
+        """Re-render visible **active** timers so they count down live.
+
+        Called ~once a second by a background ticker. Only active timers on the
+        current view are redrawn (their remaining time is recomputed at render);
+        a no-op when nothing is counting down.
+        """
+        with self._lock:
+            if self._disconnected:
+                return
+            frame = self.stack[-1]
+            if frame.kind is FrameKind.ROOM:
+                for key, action in self.key_map.items():
+                    entity = action.entity
+                    if (action.kind is ActionKind.ENTITY and entity is not None
+                            and entity.is_timer and (entity.state or "").lower() == "active"):
+                        self.display.set_image(key, self.renderer.device(entity))
+            elif frame.kind is FrameKind.TIMER:
+                entity = frame.entity
+                if entity is not None and (entity.state or "").lower() == "active":
+                    for key, action in self.key_map.items():
+                        if action.kind is ActionKind.TIMER_STATUS:
+                            self.display.set_image(key, self.renderer.timer_status(entity))
 
     def set_connected(self, connected: bool) -> None:
         with self._lock:

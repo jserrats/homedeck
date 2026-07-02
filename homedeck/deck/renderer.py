@@ -261,6 +261,23 @@ class KeyRenderer:
             self._draw_label(draw, event.trigger, y=int(self.h * 0.72), size=10, color=(190, 190, 195), max_lines=1)
         return img
 
+    def timer_status(self, entity: DeviceEntity) -> Image.Image:
+        """Big remaining-time display for the timer detail view."""
+        img, draw = self._canvas()
+        color = STATUS_COLORS.get(entity.status, NEUTRAL)
+        self._draw_label(draw, entity.state.upper(), y=int(self.h * 0.08), size=11, color=color, max_lines=1)
+        draw.text((self.w / 2, self.h * 0.45), entity.display_value() or "—",
+                  font=self._value_font(int(self.h * 0.26)), fill=TEXT, anchor="mm")
+        self._draw_label(draw, entity.name, y=int(self.h * 0.70), size=11, color=NAV_COLOR, max_lines=2)
+        return img
+
+    def action_button(self, icon_name: str, label: str, color: tuple[int, int, int]) -> Image.Image:
+        """A labeled action key (e.g. Pause / Cancel / Finish)."""
+        img, draw = self._canvas()
+        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.42), cy=int(self.h * 0.36), color=color)
+        self._draw_label(draw, label, y=int(self.h * 0.66), size=13)
+        return img
+
     def nav(self, kind: str) -> Image.Image:
         """kind: 'back' | 'prev' | 'next'."""
         img, draw = self._canvas()

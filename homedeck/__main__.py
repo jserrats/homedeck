@@ -194,13 +194,18 @@ def run_deck(config: Config) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="homedeck", description="Control Home Assistant from a Stream Deck XL")
     parser.add_argument("--export", metavar="DIR", help="render room views to PNG grids in DIR and exit (no hardware)")
-    parser.add_argument("-v", "--verbose", action="store_true", help="enable debug logging")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="verbose (INFO) logging; without it only warnings and errors are shown")
     args = parser.parse_args(argv)
 
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=logging.INFO if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # These libraries log every message/request at INFO/DEBUG — keep them quiet
+    # even in verbose mode.
+    for noisy in ("homeassistant_api", "websockets", "urllib3", "asyncio"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     try:
         config = Config.from_env()

@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from . import icons
 from ..color import hs_to_rgb, kelvin_to_rgb, scale
+from ..ha.history import HistoryEvent
 from ..ha.model import BUTTON_DOMAINS, CLIMATE_DOMAINS, DeviceEntity, Floor, Room, Status
 from ..ha.weather import ForecastDay, Weather
 
@@ -239,6 +240,25 @@ class KeyRenderer:
         img, draw = self._canvas()
         self._draw_label(draw, caption, y=int(self.h * 0.12), size=11, color=NAV_COLOR, max_lines=1)
         draw.text((self.w / 2, self.h * 0.58), value, font=self._value_font(int(self.h * 0.34)), fill=TEXT, anchor="mm")
+        return img
+
+    def history_title(self, entity: DeviceEntity) -> Image.Image:
+        """Header tile for the history view: entity name under a clock icon."""
+        img, draw = self._canvas()
+        self._draw_glyph(draw, icons.glyph("history"), size=int(self.h * 0.34), cy=int(self.h * 0.30), color=WEATHER_ACCENT)
+        self._draw_label(draw, entity.name, y=int(self.h * 0.56), size=12, max_lines=2)
+        return img
+
+    def history_event(self, event: HistoryEvent) -> Image.Image:
+        """One timeline entry: clock time + relative time, the new state, and its trigger."""
+        img, draw = self._canvas()
+        self._draw_label(draw, event.time_label, y=int(self.h * 0.04), size=12, color=TEXT, max_lines=1)
+        self._draw_label(draw, event.rel_label, y=int(self.h * 0.25), size=10, color=NAV_COLOR, max_lines=1)
+        state_color = ACCENT if event.state.lower() in ("on", "open", "home") else NEUTRAL
+        draw.text((self.w / 2, self.h * 0.52), event.state, font=self._value_font(int(self.h * 0.19)),
+                  fill=state_color, anchor="mm")
+        if event.trigger:
+            self._draw_label(draw, event.trigger, y=int(self.h * 0.72), size=10, color=(190, 190, 195), max_lines=1)
         return img
 
     def nav(self, kind: str) -> Image.Image:

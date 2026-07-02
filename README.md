@@ -24,6 +24,10 @@ auto-populated with that area's devices:
   while moving); door-like ones also switch between the closed and open icon.
 - **Presence / occupancy sensors** — the icon turns **purple** while detecting (grey when
   clear), matching the room's presence dot.
+- **History (switches & binary sensors)** — a **long press** opens a fullscreen timeline of
+  recent state changes from the HA logbook, newest first, each showing the **clock time**, the
+  new state, and **what triggered it** (an automation, a user, or another entity). Times use
+  Home Assistant's own timezone (read from its config), falling back to the container `TZ`.
 - **Fans & climate** — the icon reads **sky blue** when active (instead of the amber "on").
 - Each key shows the entity's **HA icon and name**, and the **icon color reflects state**:
   amber = on, grey = off. A light that supports **dimming, color temperature or color** tints

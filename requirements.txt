@@ -5,3 +5,4 @@ HomeAssistant-API>=5.0.0
 # only to a version listed at https://www.piwheels.org/project/pillow/ for cp311.
 Pillow==12.2.0
 python-dotenv>=1.0.0
+tzdata>=2024.1

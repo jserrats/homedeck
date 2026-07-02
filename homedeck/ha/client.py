@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Callable, TypeVar
 
 from homeassistant_api import WebsocketClient
@@ -144,6 +145,24 @@ class HaClient:
             entry = next(iter(data.values()))
         forecast = (entry or {}).get("forecast", [])
         return forecast if isinstance(forecast, list) else []
+
+    def get_config(self) -> dict:
+        """Home Assistant configuration (includes 'time_zone')."""
+        result = self._command("get_config")
+        return result if isinstance(result, dict) else {}
+
+    def get_logbook(self, entity_id: str, hours: int = 24) -> list[dict]:
+        """Fetch recent logbook events for an entity (state changes + context).
+
+        Returns [] if the logbook isn't available.
+        """
+        start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        try:
+            result = self._command("logbook/get_events", start_time=start, entity_ids=[entity_id])
+        except Exception as exc:  # noqa: BLE001 - history is best-effort
+            logger.info("Logbook unavailable for %s (%s)", entity_id, exc)
+            return []
+        return result if isinstance(result, list) else []
 
     def call_service(self, domain: str, service: str, entity_id: str, data: dict | None = None) -> None:
         self._execute(

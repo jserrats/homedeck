@@ -13,6 +13,10 @@ services:
     container_name: homedeck
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Fallback timezone for history clock times if HA's own timezone can't be
+      # read. Override in .env with TZ=...
+      TZ: ${TZ:-Europe/Madrid}
 
     # The Stream Deck is a USB HID device. Bind-mount the USB bus and grant
     # access to USB character devices (major 189) so the container can open it

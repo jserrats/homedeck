@@ -21,11 +21,13 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
+from datetime import tzinfo
 from enum import Enum, auto
 from typing import Callable
 
 from ..deck import renderer as renderer_mod
 from ..deck.renderer import KeyRenderer
+from ..ha.history import HistoryEvent, parse_logbook
 from ..ha.model import DeviceEntity, Floor, Room, Status
 from ..ha.weather import ForecastDay, Weather, parse_forecast
 
@@ -45,6 +47,7 @@ class FrameKind(Enum):
     SECURITY = auto()
     LIGHT_GRID = auto()
     WEATHER = auto()
+    HISTORY = auto()
 
 
 @dataclass
@@ -52,8 +55,9 @@ class Frame:
     kind: FrameKind
     room: Room | None = None
     page: int = 0
-    entity: DeviceEntity | None = None  # the light being edited in a LIGHT_GRID
+    entity: DeviceEntity | None = None  # light being edited (LIGHT_GRID) / entity (HISTORY)
     forecast: list[ForecastDay] | None = None  # days shown in a WEATHER frame
+    history: list[HistoryEvent] | None = None  # events shown in a HISTORY frame
 
 
 class ActionKind(Enum):
@@ -65,6 +69,8 @@ class ActionKind(Enum):
     GRID_CELL = auto()     # a brightness/color-temp preset in the light grid
     WEATHER_DAY = auto()   # non-interactive forecast tile (compact fallback)
     WEATHER_CELL = auto()  # one cell of the full-matrix forecast (day/icon/min/max)
+    HISTORY_TITLE = auto() # header of the history view (entity name)
+    HISTORY_EVENT = auto() # one timeline entry in the history view
     BACK = auto()
     PAGE = auto()
     BLANK = auto()
@@ -79,6 +85,7 @@ class Action:
     delta: int = 0
     data: dict | None = None  # GRID_CELL: {"brightness_pct":.., "color_temp_kelvin":..}
     day: ForecastDay | None = None  # WEATHER_DAY tile
+    event: HistoryEvent | None = None  # HISTORY_EVENT tile
 
 
 class Display:
@@ -104,6 +111,8 @@ class Navigation:
         unassigned_rooms: list[Room] | None = None,
         weather: Weather | None = None,
         on_forecast: Callable[[str], list[dict]] | None = None,
+        on_logbook: Callable[[str], list[dict]] | None = None,
+        tz: tzinfo | None = None,
     ) -> None:
         self.display = display
         self.renderer = renderer
@@ -111,6 +120,8 @@ class Navigation:
         self.on_service = on_service
         self.weather = weather
         self.on_forecast = on_forecast
+        self.on_logbook = on_logbook
+        self.tz = tz  # HA timezone for history clock labels (None = container local)
         # When floors exist, the home screen lists floor folders (+ unassigned
         # rooms); otherwise it lists rooms directly.
         self.floors = floors or []
@@ -180,6 +191,10 @@ class Navigation:
             if "hs_color" in d:
                 return self.renderer.color_cell(d["hs_color"][0], d["hs_color"][1], d["brightness_pct"])
             return self.renderer.light_cell(d["color_temp_kelvin"], d["brightness_pct"])
+        if action.kind is ActionKind.HISTORY_TITLE:
+            return self.renderer.history_title(action.entity)
+        if action.kind is ActionKind.HISTORY_EVENT:
+            return self.renderer.history_event(action.event)
         if action.kind is ActionKind.BACK:
             return self.renderer.nav("back")
         if action.kind is ActionKind.PAGE:
@@ -196,7 +211,20 @@ class Navigation:
             return self._light_grid_key_map(frame)
         if frame.kind is FrameKind.WEATHER:
             return self._weather_key_map(frame)
+        if frame.kind is FrameKind.HISTORY:
+            return self._history_key_map(frame)
         return self._home_key_map(frame)
+
+    def _history_key_map(self, frame: Frame) -> dict[int, Action]:
+        """History view: Back, an entity-name header, then newest-first events."""
+        result: dict[int, Action] = {0: Action(ActionKind.BACK)}
+        result[1] = Action(ActionKind.HISTORY_TITLE, entity=frame.entity)
+        for i, event in enumerate(frame.history or []):
+            key = 2 + i
+            if key >= self.display.key_count:
+                break
+            result[key] = Action(ActionKind.HISTORY_EVENT, event=event)
+        return result
 
     def _weather_key_map(self, frame: Frame) -> dict[int, Action]:
         """Fullscreen forecast: one column per day, rows = day / icon / min / max."""
@@ -363,9 +391,13 @@ class Navigation:
             long = entity.has_long_press and (time.monotonic() - start) >= LONG_PRESS_S
             if long and self._grid_fits() and (entity.supports_rgb_color or entity.supports_light_grid):
                 self._open_light_grid(entity)  # opens the picker; view changes
-            else:
+            elif long and entity.supports_history:
+                self._open_history(entity)  # opens the history view; view changes
+            elif entity.is_controllable:
                 self._invoke(entity, long=long)
                 self._restore_key(key)  # clear any hold feedback
+            else:
+                self._restore_key(key)  # non-controllable short press: nothing to do
 
     def _arm_hold(self, key: int, entity: DeviceEntity) -> None:
         """Record press time and schedule the armed-feedback render."""
@@ -383,6 +415,8 @@ class Navigation:
                 return  # released (or disconnected) before the threshold
             if entity.supports_rgb_color or entity.supports_light_grid:
                 img = self.renderer.hold_feedback("palette", "Release for presets")
+            elif entity.supports_history:
+                img = self.renderer.hold_feedback("history", "Release for history")
             else:
                 img = self.renderer.hold_feedback()  # lock: "Release to open"
             self.display.set_image(key, img)
@@ -402,8 +436,9 @@ class Navigation:
             self._push(Frame(FrameKind.SECURITY))
         elif action.kind is ActionKind.OPEN_WEATHER:
             self._open_weather()
-        elif action.kind in (ActionKind.WEATHER_DAY, ActionKind.WEATHER_CELL):
-            return  # forecast tiles are not interactive
+        elif action.kind in (ActionKind.WEATHER_DAY, ActionKind.WEATHER_CELL,
+                             ActionKind.HISTORY_TITLE, ActionKind.HISTORY_EVENT):
+            return  # forecast/history tiles are not interactive
         elif action.kind is ActionKind.FLOOR_HEADER:
             self._toggle_floor(action.floor)
         elif action.kind is ActionKind.BACK:
@@ -489,6 +524,15 @@ class Navigation:
             except Exception as exc:  # noqa: BLE001 - forecast is best-effort
                 logger.warning("Forecast fetch failed: %s", exc)
         self._push(Frame(FrameKind.WEATHER, forecast=parse_forecast(raw)))
+
+    def _open_history(self, entity: DeviceEntity) -> None:
+        raw: list[dict] = []
+        if self.on_logbook is not None:
+            try:
+                raw = self.on_logbook(entity.entity_id)
+            except Exception as exc:  # noqa: BLE001 - history is best-effort
+                logger.warning("Logbook fetch failed for %s: %s", entity.entity_id, exc)
+        self._push(Frame(FrameKind.HISTORY, entity=entity, history=parse_logbook(raw, self.tz)))
 
     def update_weather(self, state: str, attributes: dict) -> None:
         """Refresh the weather entity and re-render its home button if visible."""

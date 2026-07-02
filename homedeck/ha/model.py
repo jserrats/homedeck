@@ -36,6 +36,9 @@ OFF_INDICATOR_DOMAINS = frozenset({"light", "switch", "fan", "input_boolean"})
 
 # Climate-related domains whose icon reads sky-blue (not the amber "on") when active.
 CLIMATE_DOMAINS = frozenset({"fan", "climate"})
+
+# Domains whose long-press opens a state-history / logbook view.
+HISTORY_DOMAINS = frozenset({"switch", "binary_sensor"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
 CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
@@ -330,8 +333,18 @@ class DeviceEntity:
         return brightness, hues
 
     @property
+    def supports_history(self) -> bool:
+        """Switches and binary sensors open a logbook/history view on long-press."""
+        return self.domain in HISTORY_DOMAINS
+
+    @property
     def has_long_press(self) -> bool:
-        return self.long_press_call() is not None or self.supports_light_grid or self.supports_rgb_color
+        return (
+            self.long_press_call() is not None
+            or self.supports_light_grid
+            or self.supports_rgb_color
+            or self.supports_history
+        )
 
     def update_from_state(self, state: str, attributes: dict | None) -> None:
         self.state = state

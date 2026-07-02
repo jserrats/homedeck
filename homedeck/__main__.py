@@ -55,6 +55,27 @@ def _load_model(client: HaClient, weather_pref: str | None) -> tuple[list[Room],
     return rooms, floors, unassigned, weather
 
 
+def _resolve_timezone(client: HaClient, fallback: str | None):
+    """HA's configured timezone (preferred). None → use the container's TZ."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    name = None
+    try:
+        name = client.get_config().get("time_zone")
+    except Exception as exc:  # noqa: BLE001 - timezone is best-effort
+        logger.info("Could not read HA timezone (%s)", exc)
+    for candidate in (name, fallback):
+        if not candidate:
+            continue
+        try:
+            tz = ZoneInfo(candidate)
+            logger.info("Using timezone %s for history", candidate)
+            return tz
+        except (ZoneInfoNotFoundError, ValueError):
+            logger.warning("Unknown timezone %r; ignoring", candidate)
+    return None  # fall back to the container's local time (TZ env)
+
+
 def _index_entities(rooms: list[Room]) -> dict[str, DeviceEntity]:
     index: dict[str, DeviceEntity] = {}
     for room in rooms:
@@ -109,6 +130,8 @@ def run_deck(config: Config) -> int:
         deck, renderer, rooms, on_service=on_service,
         floors=floors, unassigned_rooms=unassigned,
         weather=weather, on_forecast=client.get_forecast,
+        on_logbook=client.get_logbook,
+        tz=_resolve_timezone(client, config.timezone),
     )
     entity_index = _index_entities(rooms)
     weather_id = weather.entity_id if weather else None

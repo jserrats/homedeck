@@ -14,6 +14,7 @@ class Config:
     ha_token: str
     brightness: int
     weather_entity: str | None
+    timezone: str | None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -43,7 +44,13 @@ class Config:
 
         brightness = _clamp_int(os.environ.get("HOMEDECK_BRIGHTNESS"), default=60, lo=0, hi=100)
         weather_entity = (os.environ.get("HOMEDECK_WEATHER_ENTITY") or "").strip() or None
-        return cls(ha_url=ha_url, ha_token=ha_token, brightness=brightness, weather_entity=weather_entity)
+        # Fallback timezone if HA's own time_zone can't be read; TZ also sets the
+        # container's local time. Defaults to Europe/Madrid.
+        timezone = (os.environ.get("HOMEDECK_TZ") or os.environ.get("TZ") or "Europe/Madrid").strip()
+        return cls(
+            ha_url=ha_url, ha_token=ha_token, brightness=brightness,
+            weather_entity=weather_entity, timezone=timezone,
+        )
 
 
 def _clamp_int(raw: str | None, *, default: int, lo: int, hi: int) -> int:

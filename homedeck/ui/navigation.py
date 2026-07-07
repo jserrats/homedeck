@@ -120,6 +120,7 @@ class Navigation:
         on_forecast: Callable[[str], list[dict]] | None = None,
         on_logbook: Callable[[str], list[dict]] | None = None,
         on_reload: Callable[[], None] | None = None,
+        on_rotate: Callable[[], None] | None = None,
         tz: tzinfo | None = None,
     ) -> None:
         self.display = display
@@ -130,6 +131,7 @@ class Navigation:
         self.on_forecast = on_forecast
         self.on_logbook = on_logbook
         self.on_reload = on_reload
+        self.on_rotate = on_rotate
         self.tz = tz  # HA timezone for history clock labels (None = container local)
         # When floors exist, the home screen lists floor folders (+ unassigned
         # rooms); otherwise it lists rooms directly.
@@ -242,11 +244,15 @@ class Navigation:
 
     def _settings_key_map(self, frame: Frame) -> dict[int, Action]:
         """Deck settings: Back, then one button per setting."""
+        rotation = getattr(self.display, "rotation", 0)
         return {
             0: Action(ActionKind.BACK),
             1: Action(ActionKind.SETTINGS_ITEM,
                       data={"action": "reload", "label": "Reload", "icon": "cloud-refresh",
                             "color": renderer_mod.WEATHER_ACCENT}),
+            2: Action(ActionKind.SETTINGS_ITEM,
+                      data={"action": "rotate", "label": f"Rotate\n{rotation}°", "icon": "screen-rotation",
+                            "color": renderer_mod.SETTINGS_ACCENT}),
         }
 
     def _timer_key_map(self, frame: Frame) -> dict[int, Action]:
@@ -606,11 +612,14 @@ class Navigation:
         self._push(Frame(FrameKind.TIMER, entity=entity))
 
     def _run_setting(self, action: Action) -> None:
-        if (action.data or {}).get("action") == "reload" and self.on_reload is not None:
-            try:
-                self.on_reload()  # re-fetches from HA and swaps the model in
-            except Exception as exc:  # noqa: BLE001 - a failed reload must not crash the deck
-                logger.warning("Config reload failed: %s", exc)
+        which = (action.data or {}).get("action")
+        callback = {"reload": self.on_reload, "rotate": self.on_rotate}.get(which)
+        if callback is None:
+            return
+        try:
+            callback()  # reload re-fetches from HA; rotate re-orients + redraws
+        except Exception as exc:  # noqa: BLE001 - a failed setting must not crash the deck
+            logger.warning("Setting '%s' failed: %s", which, exc)
 
     def set_model(self, rooms, floors, unassigned_rooms, weather) -> None:
         """Swap in a freshly loaded model (used by the Settings reload)."""

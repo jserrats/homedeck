@@ -51,9 +51,12 @@ rows above):
   `weather.*` entity; press it for a **fullscreen forecast** that fills the grid — **one column
   per day**, with rows for the weekday, condition icon, min and max temperature. Set
   `HOMEDECK_WEATHER_ENTITY` to choose which weather entity (defaults to the first one found).
-- A **Settings** folder (always pinned last) for deck settings. Its first item is **Reload**,
-  which re-fetches areas/entities/floors/weather from Home Assistant so newly added or changed
-  entities show up without restarting the service.
+- A **Settings** folder (always pinned last) for deck settings:
+  - **Reload** — re-fetches areas/entities/floors/weather from Home Assistant so newly added or
+    changed entities show up without restarting the service.
+  - **Rotate** — cycles the display through 0°/90°/180°/270°, so you can mount the deck in
+    **landscape or portrait** in any orientation. It remaps keys and rotates each key image, and
+    the choice persists (see `HOMEDECK_ROTATION` / state file below).
 
 Rooms are discovered automatically from HA areas; device→room mapping uses the entity registry
 with a device-registry fallback. Entities hidden in HA (the *Visible* toggle) and

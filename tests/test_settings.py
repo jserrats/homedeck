@@ -82,3 +82,37 @@ def test_set_model_swaps_and_returns_home():
     nav.set_model([new_room], [], [], None)
     assert nav.rooms == [new_room]
     assert nav.stack[-1].kind is FrameKind.HOME
+
+
+# -- rotate setting -----------------------------------------------------------
+
+def test_settings_has_rotate_item():
+    nav, _ = _nav()
+    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.SETTINGS)]
+    view = nav._build_key_map()
+    rotate = next(a for a in view.values()
+                  if a.kind is ActionKind.SETTINGS_ITEM and a.data.get("action") == "rotate")
+    assert rotate is not None
+
+
+def test_pressing_rotate_invokes_callback():
+    calls = []
+    room = Room("living", "Living", entities=[DeviceEntity("light.l", "L", "light", "on")])
+    display = ExportDisplay()
+    nav = Navigation(display, KeyRenderer(display.key_size), [room],
+                     on_service=lambda c: None, on_rotate=lambda: calls.append(True))
+    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.SETTINGS)]
+    nav.key_map = nav._build_key_map()
+    rotate_key = next(k for k, a in nav.key_map.items()
+                      if a.kind is ActionKind.SETTINGS_ITEM and a.data.get("action") == "rotate")
+    nav.handle_press(rotate_key, True)
+    assert calls == [True]
+
+
+def test_portrait_home_pins_specials_to_bottom_row():
+    # A 4-wide (portrait) display -> 8 rows; specials sit on the last row (28..31).
+    display = ExportDisplay(cols=4)
+    room = Room("living", "Living", entities=[DeviceEntity("light.l", "L", "light", "on")])
+    nav = Navigation(display, KeyRenderer(display.key_size), [room], on_service=lambda c: None)
+    home = nav._build_key_map()
+    assert all(k >= 28 for k in _special_keys(home))

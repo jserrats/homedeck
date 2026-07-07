@@ -1,4 +1,5 @@
 import pytest
+from PIL import Image
 
 from homedeck.deck import controller as ctrl_mod
 from homedeck.deck.controller import DeckController
@@ -53,7 +54,7 @@ class FakeDeck:
 
 
 @pytest.fixture
-def deck_env(monkeypatch):
+def deck_env(monkeypatch, tmp_path):
     present: list[FakeDeck] = []
 
     class FakeManager:
@@ -63,6 +64,7 @@ def deck_env(monkeypatch):
     monkeypatch.setattr(ctrl_mod, "DeviceManager", FakeManager)
     # to_native_key_format needs a real deck; make it a passthrough for tests
     monkeypatch.setattr(ctrl_mod.PILHelper, "to_native_key_format", lambda deck, image: image)
+    monkeypatch.setenv("HOMEDECK_STATE_FILE", str(tmp_path / "state.json"))  # don't touch ~
     return present
 
 
@@ -126,3 +128,81 @@ def test_set_image_failure_triggers_teardown(deck_env):
 def test_no_deck_raises(deck_env):
     with pytest.raises(RuntimeError):
         DeckController()  # deck_env is empty
+
+
+# -- display rotation ---------------------------------------------------------
+
+def test_rotation_changes_logical_columns(deck_env):
+    deck_env.append(FakeDeck())
+    ctl = DeckController()
+    assert (ctl.rotation, ctl.cols, ctl.key_count) == (0, 8, 32)
+    ctl.set_rotation(90)
+    assert (ctl.rotation, ctl.cols, ctl.key_count) == (90, 4, 32)   # portrait
+    ctl.set_rotation(270)
+    assert ctl.cols == 4
+    ctl.set_rotation(180)
+    assert ctl.cols == 8
+    ctl.set_rotation(360)  # normalized back to 0
+    assert (ctl.rotation, ctl.cols) == (0, 8)
+
+
+def test_rotation_key_maps_are_bijections(deck_env):
+    deck_env.append(FakeDeck())
+    ctl = DeckController()
+    for deg in (0, 90, 180, 270):
+        ctl.set_rotation(deg)
+        n = ctl.key_count
+        assert sorted(ctl._log_to_phys[k] for k in range(n)) == list(range(n))  # covers all keys
+        for k in range(n):
+            assert ctl._phys_to_log[ctl._log_to_phys[k]] == k  # inverse consistent
+    ctl.set_rotation(0)
+    assert all(ctl._log_to_phys[k] == k for k in range(ctl.key_count))  # identity at 0
+
+
+def test_rotation_reading_order_not_reversed(deck_env):
+    # At 90° the logical top-left key must land on the physical top-right key,
+    # matching the clockwise image rotation (regression: it used to be reversed,
+    # mapping to the physical bottom-left, so portrait read bottom-up/right-left).
+    deck_env.append(FakeDeck())
+    ctl = DeckController()
+    ctl.set_rotation(90)
+    assert ctl._log_to_phys[0] == 7  # physical top-right of a 4x8 deck
+
+
+def test_set_image_writes_to_mapped_physical_key(deck_env):
+    d = FakeDeck()
+    deck_env.append(d)
+    ctl = DeckController()
+    ctl.set_rotation(90)
+    ctl.set_image(0, Image.new("RGB", (96, 96), (1, 2, 3)))
+    assert ctl._log_to_phys[0] in d.images  # logical 0 landed on its physical key
+
+
+def test_press_maps_physical_key_to_logical(deck_env):
+    d = FakeDeck()
+    deck_env.append(d)
+    ctl = DeckController()
+    got = []
+    ctl.set_callback(lambda key, pressed: got.append((key, pressed)))
+    ctl.set_rotation(90)
+    d.callback(d, 0, True)  # the deck fires physical key 0
+    assert got == [(ctl._phys_to_log[0], True)]
+
+
+def test_rotation_triggers_redraw_and_persists(deck_env):
+    deck_env.append(FakeDeck())
+    ctl = DeckController()
+    redraws = []
+    ctl.set_reconnect_callback(lambda: redraws.append(True))
+    ctl.cycle_rotation()
+    assert ctl.rotation == 90
+    assert redraws == [True]
+    # persisted so a fresh controller starts rotated
+    from homedeck import state
+    assert state.load().get("rotation") == 90
+
+
+def test_initial_rotation_applied(deck_env):
+    deck_env.append(FakeDeck())
+    ctl = DeckController(rotation_degrees=90)
+    assert ctl.rotation == 90 and ctl.cols == 4

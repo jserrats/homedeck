@@ -15,6 +15,7 @@ class Config:
     brightness: int
     weather_entity: str | None
     timezone: str | None
+    rotation: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -47,9 +48,11 @@ class Config:
         # Fallback timezone if HA's own time_zone can't be read; TZ also sets the
         # container's local time. Defaults to Europe/Madrid.
         timezone = (os.environ.get("HOMEDECK_TZ") or os.environ.get("TZ") or "Europe/Madrid").strip()
+        rotation = _clamp_int(os.environ.get("HOMEDECK_ROTATION"), default=0, lo=0, hi=270)
+        rotation = (rotation // 90) * 90  # normalize to 0/90/180/270
         return cls(
             ha_url=ha_url, ha_token=ha_token, brightness=brightness,
-            weather_entity=weather_entity, timezone=timezone,
+            weather_entity=weather_entity, timezone=timezone, rotation=rotation,
         )
 
 

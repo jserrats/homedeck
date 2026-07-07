@@ -12,6 +12,7 @@ import signal
 import sys
 import threading
 
+from . import state
 from .config import Config
 from .export import ExportDisplay, export_views
 from .ha.client import HaClient
@@ -120,7 +121,10 @@ def run_deck(config: Config) -> int:
     if not rooms:
         logger.warning("No rooms with in-scope devices found. Check your HA areas.")
 
-    deck = DeckController(brightness=config.brightness)
+    # Initial rotation: last persisted choice, else the configured default.
+    persisted = state.load().get("rotation")
+    initial_rotation = persisted if persisted in (0, 90, 180, 270) else config.rotation
+    deck = DeckController(brightness=config.brightness, rotation_degrees=initial_rotation)
     renderer = KeyRenderer(deck.key_size)
 
     def on_service(call: tuple[str, str, str, dict]) -> None:
@@ -141,6 +145,7 @@ def run_deck(config: Config) -> int:
         floors=floors, unassigned_rooms=unassigned,
         weather=weather, on_forecast=client.get_forecast,
         on_logbook=client.get_logbook, on_reload=reload_model,
+        on_rotate=deck.cycle_rotation,
         tz=_resolve_timezone(client, config.timezone),
     )
 

@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 # Sentinel area ids for the virtual home-screen folders.
 LIGHTS_ON_AREA = "__lights_on__"
 SECURITY_AREA = "__security__"
+SETTINGS_AREA = "__settings__"
 
 # Hold at least this long for a press to count as a long press (e.g. open a lock).
 LONG_PRESS_S = 0.5
@@ -49,6 +50,7 @@ class FrameKind(Enum):
     WEATHER = auto()
     HISTORY = auto()
     TIMER = auto()
+    SETTINGS = auto()
 
 
 @dataclass
@@ -65,6 +67,8 @@ class ActionKind(Enum):
     OPEN_ROOM = auto()
     OPEN_SECURITY = auto()
     OPEN_WEATHER = auto()
+    OPEN_SETTINGS = auto()
+    SETTINGS_ITEM = auto()  # an action button inside the Settings folder
     FLOOR_HEADER = auto()  # non-interactive section label
     ENTITY = auto()
     GRID_CELL = auto()     # a brightness/color-temp preset in the light grid
@@ -115,6 +119,7 @@ class Navigation:
         weather: Weather | None = None,
         on_forecast: Callable[[str], list[dict]] | None = None,
         on_logbook: Callable[[str], list[dict]] | None = None,
+        on_reload: Callable[[], None] | None = None,
         tz: tzinfo | None = None,
     ) -> None:
         self.display = display
@@ -124,6 +129,7 @@ class Navigation:
         self.weather = weather
         self.on_forecast = on_forecast
         self.on_logbook = on_logbook
+        self.on_reload = on_reload
         self.tz = tz  # HA timezone for history clock labels (None = container local)
         # When floors exist, the home screen lists floor folders (+ unassigned
         # rooms); otherwise it lists rooms directly.
@@ -141,6 +147,8 @@ class Navigation:
         # Virtual folder gathering all locks, closures and presence sensors,
         # grouped by type (one type per row).
         self.security_folder = Room(area_id=SECURITY_AREA, name="Security", icon="mdi:shield-home")
+        # Deck settings folder, always pinned last.
+        self.settings_folder = Room(area_id=SETTINGS_AREA, name="Settings", icon="mdi:cog")
 
         self.stack: list[Frame] = [Frame(FrameKind.HOME)]
         self._collapsed_floors: set[str] = set()  # floor_ids whose rooms are hidden
@@ -172,6 +180,11 @@ class Navigation:
             return self.renderer.room(action.room, accent=renderer_mod.SECURITY_ACCENT)
         if action.kind is ActionKind.OPEN_WEATHER:
             return self.renderer.weather_button(self.weather)
+        if action.kind is ActionKind.OPEN_SETTINGS:
+            return self.renderer.room(action.room, accent=renderer_mod.SETTINGS_ACCENT)
+        if action.kind is ActionKind.SETTINGS_ITEM:
+            d = action.data or {}
+            return self.renderer.action_button(d["icon"], d["label"], d["color"])
         if action.kind is ActionKind.WEATHER_DAY:
             return self.renderer.weather_day(action.day)
         if action.kind is ActionKind.WEATHER_CELL:
@@ -223,7 +236,18 @@ class Navigation:
             return self._history_key_map(frame)
         if frame.kind is FrameKind.TIMER:
             return self._timer_key_map(frame)
+        if frame.kind is FrameKind.SETTINGS:
+            return self._settings_key_map(frame)
         return self._home_key_map(frame)
+
+    def _settings_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Deck settings: Back, then one button per setting."""
+        return {
+            0: Action(ActionKind.BACK),
+            1: Action(ActionKind.SETTINGS_ITEM,
+                      data={"action": "reload", "label": "Reload", "icon": "cloud-refresh",
+                            "color": renderer_mod.WEATHER_ACCENT}),
+        }
 
     def _timer_key_map(self, frame: Frame) -> dict[int, Action]:
         """Timer detail: Back, remaining-time status, then Pause/Resume, Cancel, Finish."""
@@ -291,6 +315,7 @@ class Navigation:
         ]
         if self.weather is not None:
             specials.append(Action(ActionKind.OPEN_WEATHER))
+        specials.append(Action(ActionKind.OPEN_SETTINGS, room=self.settings_folder))  # always last
         cols = getattr(self.display, "cols", 0)
         if not cols:  # no grid info: content first, specials at the end
             return layout_page(content + specials, self.display.key_count, {}, frame.page)
@@ -472,6 +497,10 @@ class Navigation:
             self._push(Frame(FrameKind.SECURITY))
         elif action.kind is ActionKind.OPEN_WEATHER:
             self._open_weather()
+        elif action.kind is ActionKind.OPEN_SETTINGS:
+            self._push(Frame(FrameKind.SETTINGS))
+        elif action.kind is ActionKind.SETTINGS_ITEM:
+            self._run_setting(action)
         elif action.kind in (ActionKind.WEATHER_DAY, ActionKind.WEATHER_CELL,
                              ActionKind.HISTORY_TITLE, ActionKind.HISTORY_EVENT,
                              ActionKind.TIMER_STATUS):
@@ -575,6 +604,23 @@ class Navigation:
 
     def _open_timer(self, entity: DeviceEntity) -> None:
         self._push(Frame(FrameKind.TIMER, entity=entity))
+
+    def _run_setting(self, action: Action) -> None:
+        if (action.data or {}).get("action") == "reload" and self.on_reload is not None:
+            try:
+                self.on_reload()  # re-fetches from HA and swaps the model in
+            except Exception as exc:  # noqa: BLE001 - a failed reload must not crash the deck
+                logger.warning("Config reload failed: %s", exc)
+
+    def set_model(self, rooms, floors, unassigned_rooms, weather) -> None:
+        """Swap in a freshly loaded model (used by the Settings reload)."""
+        with self._lock:
+            self.rooms = rooms
+            self.floors = floors or []
+            self.unassigned_rooms = unassigned_rooms or []
+            self.weather = weather
+            self._collapsed_floors.clear()  # floor ids may have changed
+        self.home()  # return to a freshly rendered home
 
     def _invoke_timer(self, action: Action) -> None:
         d = action.data or {}

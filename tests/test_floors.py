@@ -75,6 +75,7 @@ def test_home_groups_rooms_under_floor_headers():
         ("OPEN_ROOM", "Garage"),
         ("OPEN_ROOM", "Lights On"),
         ("OPEN_SECURITY", "Security"),
+        ("OPEN_SETTINGS", "Settings"),
     ]
 
 

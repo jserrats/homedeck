@@ -34,10 +34,8 @@ class FakeDeck:
     def deck_type(self):
         return "Stream Deck XL"
 
-    def get_firmware_version(self):
-        if not self.alive:
-            raise OSError("unplugged")
-        return "1.0"
+    def id(self):
+        return f"path-{id(self)}"
 
     def set_key_callback(self, cb):
         self.callback = cb
@@ -78,8 +76,7 @@ def test_watchdog_detects_disconnect_and_reconnect(deck_env):
     ctl.set_reconnect_callback(lambda: reconnects.append(True))
     ctl.set_callback(lambda key, pressed: None)
 
-    # unplug: device gone + probe fails
-    d1.alive = False
+    # unplug: device no longer enumerated
     deck_env.clear()
     ctl._watchdog_once()
     assert ctl.deck is None and d1.closed is True

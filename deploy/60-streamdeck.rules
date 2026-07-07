@@ -5,3 +5,8 @@
 # Then unplug/replug the Stream Deck.
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0fd9", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+# Disable USB autosuspend for the Stream Deck. When idle overnight the kernel
+# can autosuspend the device and it then drops off the bus and won't return
+# without a replug — set power/control to "on" so it stays powered.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0fd9", TEST=="power/control", ATTR{power/control}="on"

@@ -126,18 +126,27 @@ def run_deck(config: Config) -> int:
     def on_service(call: tuple[str, str, str, dict]) -> None:
         client.call_service(*call)
 
+    entity_index = _index_entities(rooms)
+
+    def reload_model() -> None:
+        """Re-fetch areas/entities/floors/weather from HA and swap them in."""
+        r, f, u, w = _load_model(client, config.weather_entity)
+        entity_index.clear()
+        entity_index.update(_index_entities(r))
+        navigation.set_model(r, f, u, w)
+        logger.info("Reloaded configuration from Home Assistant")
+
     navigation = Navigation(
         deck, renderer, rooms, on_service=on_service,
         floors=floors, unassigned_rooms=unassigned,
         weather=weather, on_forecast=client.get_forecast,
-        on_logbook=client.get_logbook,
+        on_logbook=client.get_logbook, on_reload=reload_model,
         tz=_resolve_timezone(client, config.timezone),
     )
-    entity_index = _index_entities(rooms)
-    weather_id = weather.entity_id if weather else None
 
     def on_state_changed(entity_id: str, state: str, attributes: dict) -> None:
-        if entity_id == weather_id:
+        w = navigation.weather
+        if w is not None and entity_id == w.entity_id:
             navigation.update_weather(state, attributes)
             return
         entity = entity_index.get(entity_id)
@@ -168,13 +177,13 @@ def run_deck(config: Config) -> int:
     ).start()
 
     # Tick active timers once a second so their remaining time counts down live.
-    if any(e.is_timer for e in entity_index.values()):
-        def tick_loop() -> None:
-            while not stop_event.is_set():
-                navigation.tick()
-                stop_event.wait(1.0)
+    # (Always on: a reload may introduce timers; tick() is a cheap no-op otherwise.)
+    def tick_loop() -> None:
+        while not stop_event.is_set():
+            navigation.tick()
+            stop_event.wait(1.0)
 
-        threading.Thread(target=tick_loop, name="timer-ticker", daemon=True).start()
+    threading.Thread(target=tick_loop, name="timer-ticker", daemon=True).start()
 
     def shutdown(*_args) -> None:
         stop_event.set()

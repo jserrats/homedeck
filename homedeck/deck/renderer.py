@@ -38,6 +38,7 @@ FLOOR_ACCENT = (52, 211, 153)    # floor folders
 LIGHTS_ACCENT = (255, 176, 0)    # "Lights On" folder
 SECURITY_ACCENT = (168, 85, 247)  # "Security" folder (purple)
 WEATHER_ACCENT = (125, 200, 247)  # weather button / forecast (sky blue)
+SETTINGS_ACCENT = (156, 163, 175)  # "Settings" folder (slate grey)
 CLIMATE_ICON = (125, 200, 247)    # active fan / climate icon (sky blue)
 NAV_COLOR = (210, 210, 214)
 DOT_LIGHT = (255, 210, 0)        # room indicator: a light is on (yellow)

@@ -51,6 +51,9 @@ rows above):
   `weather.*` entity; press it for a **fullscreen forecast** that fills the grid — **one column
   per day**, with rows for the weekday, condition icon, min and max temperature. Set
   `HOMEDECK_WEATHER_ENTITY` to choose which weather entity (defaults to the first one found).
+- A **Settings** folder (always pinned last) for deck settings. Its first item is **Reload**,
+  which re-fetches areas/entities/floors/weather from Home Assistant so newly added or changed
+  entities show up without restarting the service.
 
 Rooms are discovered automatically from HA areas; device→room mapping uses the entity registry
 with a device-registry fallback. Entities hidden in HA (the *Visible* toggle) and
@@ -140,7 +143,27 @@ docker compose logs -f
 
 The compose file bind-mounts `/dev/bus/usb` and allows USB character devices so the container
 can open the Stream Deck (including hot-plugged decks). `restart: unless-stopped` brings it
-back after reboots or transient HA/USB errors. To build the image on the Pi instead of pulling,
+back after reboots or transient HA/USB errors. HomeDeck also runs a **watchdog** that detects
+the deck being unplugged/replugged and re-opens it automatically (it logs `Stream Deck
+disconnected` / `reconnected`).
+
+### USB reliability (important on a Raspberry Pi)
+
+The Stream Deck XL is power-hungry, and on a Pi it can **drop off the USB bus when idle**
+(e.g. overnight) — then it won't return until it's physically replugged. To prevent this on the
+**host** (not the container):
+
+- **Disable USB autosuspend** for the deck. The provided udev rule sets `power/control=on`:
+  ```bash
+  sudo cp deploy/60-streamdeck.rules /etc/udev/rules.d/
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ```
+  (or disable it globally with the `usbcore.autosuspend=-1` kernel parameter in
+  `/boot/cmdline.txt`).
+- **Use a powered USB hub** for the XL so the Pi's port isn't browning out under load.
+
+The transient `Command channel error … reconnecting` lines are the HA WebSocket dropping and
+being re-established automatically — harmless. To build the image on the Pi instead of pulling,
 run `docker compose build` — on a 32-bit Pi this builds natively (no emulation) and pulls
 prebuilt wheels from piwheels, so it's a good immediate workaround before CI republishes.
 

@@ -27,6 +27,14 @@ PressCallback = Callable[[int, bool], None]
 WATCHDOG_INTERVAL_S = 2.0
 
 
+def _deck_id(deck) -> str | None:
+    """A stable identifier (USB path) for a deck, available before opening."""
+    try:
+        return deck.id()
+    except Exception:  # noqa: BLE001 - not all backends expose it
+        return None
+
+
 class DeckController:
     def __init__(self, brightness: int = 60) -> None:
         self._brightness = brightness
@@ -34,6 +42,7 @@ class DeckController:
         self.deck = None
         self._press_callback: PressCallback | None = None
         self._on_reconnect: Callable[[], None] | None = None
+        self._device_id: str | None = None
         # Geometry is cached from the first open so key_count/key_size keep
         # working while the deck is unplugged.
         self.key_size: tuple[int, int] = (96, 96)
@@ -47,18 +56,20 @@ class DeckController:
 
     # -- open / close -------------------------------------------------------
 
-    def _open_locked(self) -> bool:
-        """Open the first enumerated deck. Returns False if none is present."""
-        decks = DeviceManager().enumerate()
-        if not decks:
-            return False
-        deck = decks[0]
+    def _open_locked(self, deck=None) -> bool:
+        """Open a deck (given or the first enumerated). False if none is present."""
+        if deck is None:
+            decks = DeviceManager().enumerate()
+            if not decks:
+                return False
+            deck = decks[0]
         deck.open()
         deck.reset()
         deck.set_brightness(self._brightness)
         self.key_size = tuple(deck.key_image_format()["size"])
         self.cols = deck.key_layout()[1]
         self._key_count = deck.key_count()
+        self._device_id = _deck_id(deck)
         if self._press_callback is not None:
             cb = self._press_callback
             deck.set_key_callback(lambda _deck, key, pressed: cb(key, pressed))
@@ -120,30 +131,32 @@ class DeckController:
 
     # -- reconnection watchdog ---------------------------------------------
 
-    def _present(self) -> bool:
-        try:
-            return len(DeviceManager().enumerate()) > 0
-        except Exception:  # noqa: BLE001
-            return False
-
     def _watchdog_once(self) -> None:
-        """One check: probe the open deck, or try to re-open a returned one."""
+        """One check, driven by USB enumeration (no blocking reads on our handle).
+
+        Enumeration runs off-lock so a wedged bus can never freeze presses; the
+        open deck is considered gone the moment it stops being enumerated.
+        """
+        try:
+            enumerated = DeviceManager().enumerate()
+        except Exception as exc:  # noqa: BLE001 - treat an enumeration error as "no decks"
+            logger.debug("Deck enumeration failed: %s", exc)
+            enumerated = []
+        present_ids = {_deck_id(d) for d in enumerated}
+
         reconnected = False
         with self._lock:
-            deck = self.deck
-            if deck is not None:
-                try:
-                    deck.get_firmware_version()  # live USB read; raises if unplugged
-                except Exception:  # noqa: BLE001
+            if self.deck is not None:
+                # Still on the bus? (None id -> can't tell, trust write failures instead.)
+                if self._device_id is not None and self._device_id not in present_ids:
                     logger.warning("Stream Deck disconnected; waiting for it to return")
                     self._teardown_locked()
                 return
-        # disconnected: re-open when a deck reappears (enumerate outside the lock)
-        if self._present():
-            with self._lock:
-                reconnected = self.deck is None and self._open_locked()
+            if enumerated:  # returned to the bus -> re-open it
+                reconnected = self._open_locked(enumerated[0])
+
         if reconnected:
-            logger.info("Stream Deck reconnected")
+            logger.warning("Stream Deck reconnected")
             if self._on_reconnect is not None:
                 try:
                     self._on_reconnect()

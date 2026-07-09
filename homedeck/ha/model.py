@@ -156,6 +156,16 @@ class DeviceEntity:
         """A motion/occupancy/presence binary_sensor."""
         return self.domain == "binary_sensor" and self.device_class in PRESENCE_DEVICE_CLASSES
 
+    @property
+    def is_temperature_sensor(self) -> bool:
+        """A sensor reporting temperature (shown room-labelled in the Climate folder)."""
+        return self.domain == "sensor" and self.device_class == "temperature"
+
+    @property
+    def is_climate_entity(self) -> bool:
+        """Belongs in the Climate folder: temperature sensor, fan, or thermostat."""
+        return self.is_temperature_sensor or self.domain in CLIMATE_DOMAINS
+
     def closure_open(self) -> bool | None:
         """For closures: True if open, False if closed, None if unknown/transitional.
 

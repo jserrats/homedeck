@@ -59,8 +59,8 @@ def _nav(on_forecast=lambda eid: FORECAST):
 def test_weather_button_on_home_bottom_row():
     nav = _nav()
     home = nav._build_key_map()
-    # bottom row: 24 Lights On, 25 Security, 26 Weather
-    assert home[26].kind is ActionKind.OPEN_WEATHER
+    # bottom row: 24 Lights On, 25 Security, 26 Climate, 27 Weather
+    assert home[27].kind is ActionKind.OPEN_WEATHER
 
 
 def test_no_weather_button_when_no_weather_entity():
@@ -113,3 +113,22 @@ def test_update_weather_refreshes_button():
     nav.update_weather("rainy", {"temperature": 5})
     after = nav.display.images[wkey].tobytes()
     assert before != after  # button re-rendered with the new condition/temp
+
+
+def test_portrait_forecast_is_one_day_per_row():
+    from homedeck.ha.weather import parse_forecast
+    display = ExportDisplay(cols=4)  # portrait: 4 cols x 8 rows
+    nav = Navigation(display, KeyRenderer(display.key_size), [], on_service=lambda c: None,
+                     weather=Weather("weather.home", "sunny", 20.0), on_forecast=lambda e: FORECAST)
+    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.WEATHER, forecast=parse_forecast(FORECAST))]
+    view = nav._build_key_map()
+    assert view[0].kind is ActionKind.BACK
+    # first day occupies row 1 (keys 4..7): day / icon / max / min across the columns
+    assert view[4].data["part"] == "day" and view[4].day.label == "Mon"
+    assert view[5].data["part"] == "icon"
+    assert view[6].data["part"] == "max" and view[6].day.high_text() == "27°"
+    assert view[7].data["part"] == "min" and view[7].day.low_text() == "15°"
+    # all three days shown (row per day), not truncated to fit columns
+    day_cells = [a for a in view.values()
+                 if a.kind is ActionKind.WEATHER_CELL and a.data["part"] == "day"]
+    assert len(day_cells) == len(FORECAST)

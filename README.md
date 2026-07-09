@@ -39,14 +39,20 @@ auto-populated with that area's devices:
   mistaken for "off"). **Unavailable** devices keep a dim icon and get a small **red warning
   triangle** in the corner rather than being recolored.
 
-Two special folders are pinned to the **bottom row** of the home screen (rooms/floors fill the
-rows above):
+The special folders live in a **reserved, contrasted band** at the bottom of the home screen
+(the bottom row in landscape, the bottom two rows in portrait); rooms/floors fill the rows
+above. The band has a slightly lighter background so it reads as a distinct zone:
 
 - A dynamic **Lights On** folder: open it to see every light that is currently on (across all
   rooms) and tap to turn any off. It updates live as lights change.
 - A **Security** folder gathering every lock, door/window/closure and presence
   (motion/occupancy) entity in the house, **grouped by type with each type in its own column**
   (locks, then closures, then presence).
+- A **Climate** folder gathering every temperature sensor, fan and thermostat, **grouped by
+  type with each type in its own column** (temperature sensors, then fans, then thermostats).
+  Each **temperature tile shows the room it belongs to** — the room's icon and name instead of
+  the sensor's — with the current reading (e.g. the sofa icon, "Living Room", "21.4 °C"). Fans
+  toggle on press; thermostats show their current temperature.
 - A **Weather** tile showing the current condition icon and outside temperature from a
   `weather.*` entity; press it for a **fullscreen forecast** that fills the grid — **one column
   per day**, with rows for the weekday, condition icon, min and max temperature. Set

@@ -25,7 +25,8 @@ def _nav(on_reload=None, weather=None):
 
 def _special_keys(key_map):
     return [k for k, a in key_map.items()
-            if a.kind in (ActionKind.OPEN_SECURITY, ActionKind.OPEN_WEATHER, ActionKind.OPEN_SETTINGS)
+            if a.kind in (ActionKind.OPEN_SECURITY, ActionKind.OPEN_CLIMATE,
+                          ActionKind.OPEN_WEATHER, ActionKind.OPEN_SETTINGS)
             or (a.kind is ActionKind.OPEN_ROOM and a.room.is_dynamic)]
 
 
@@ -116,3 +117,34 @@ def test_portrait_home_pins_specials_to_bottom_row():
     nav = Navigation(display, KeyRenderer(display.key_size), [room], on_service=lambda c: None)
     home = nav._build_key_map()
     assert all(k >= 28 for k in _special_keys(home))
+
+
+# -- reserved special-folder band ---------------------------------------------
+
+_SPECIAL_KINDS = {ActionKind.OPEN_SECURITY, ActionKind.OPEN_CLIMATE, ActionKind.OPEN_WEATHER,
+                  ActionKind.OPEN_SETTINGS, ActionKind.RESERVED_BLANK}
+
+
+def _is_special_or_band(a):
+    return a.kind in _SPECIAL_KINDS or (a.kind is ActionKind.OPEN_ROOM and a.room.is_dynamic)
+
+
+def test_landscape_reserved_band_is_bottom_row():
+    nav, _ = _nav()  # 8 cols x 4 rows
+    home = nav._build_key_map()
+    for k in range(24, 32):  # entire bottom row is the band
+        assert _is_special_or_band(home[k])
+    rooms = [k for k, a in home.items() if a.kind is ActionKind.OPEN_ROOM and not a.room.is_dynamic]
+    assert all(k < 24 for k in rooms)  # content stays above the band
+
+
+def test_portrait_reserved_band_is_bottom_two_rows():
+    display = ExportDisplay(cols=4)  # 4 cols x 8 rows
+    room = Room("living", "Living", entities=[DeviceEntity("light.l", "L", "light", "on")])
+    nav = Navigation(display, KeyRenderer(display.key_size), [room], on_service=lambda c: None)
+    home = nav._build_key_map()
+    for k in range(24, 32):  # last two rows form the band
+        assert _is_special_or_band(home[k])
+    assert any(home[k].kind is ActionKind.RESERVED_BLANK for k in range(24, 32))  # band > specials
+    rooms = [k for k, a in home.items() if a.kind is ActionKind.OPEN_ROOM and not a.room.is_dynamic]
+    assert all(k < 24 for k in rooms)

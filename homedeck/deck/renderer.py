@@ -24,6 +24,7 @@ VALUE_FONT = ASSETS_DIR / "DejaVuSans-Bold.ttf"
 
 # Palette
 BG = (16, 16, 18)
+RESERVED_BG = (36, 36, 44)  # slightly lighter band behind the special folders
 TEXT = (236, 236, 238)
 ACCENT = (255, 176, 0)       # on (lights/switches/...)
 NEUTRAL = (120, 120, 126)    # off / informational
@@ -37,6 +38,7 @@ ROOM_ACCENT = (96, 165, 250)     # room folders
 FLOOR_ACCENT = (52, 211, 153)    # floor folders
 LIGHTS_ACCENT = (255, 176, 0)    # "Lights On" folder
 SECURITY_ACCENT = (168, 85, 247)  # "Security" folder (purple)
+CLIMATE_ACCENT = (45, 212, 191)   # "Climate" folder (teal)
 WEATHER_ACCENT = (125, 200, 247)  # weather button / forecast (sky blue)
 SETTINGS_ACCENT = (156, 163, 175)  # "Settings" folder (slate grey)
 CLIMATE_ICON = (125, 200, 247)    # active fan / climate icon (sky blue)
@@ -164,14 +166,38 @@ class KeyRenderer:
         font = self._icon_font(int(self.h * 0.32))
         draw.text((self.w - 2, 1), icons.glyph("alert"), font=font, fill=WARNING, anchor="rt")
 
+    def climate_room_reading(self, entity: DeviceEntity, room: Room) -> Image.Image:
+        """A temperature tile in the Climate folder, labelled by its room.
+
+        Shows the room's icon (not the thermometer) and the room's name (not the
+        entity id), with the sensor's current reading in the middle.
+        """
+        img, draw = self._canvas()
+        color = UNAVAILABLE_ICON if entity.status is Status.UNAVAILABLE else STATUS_COLORS.get(entity.status, NEUTRAL)
+        icon_name = icons.resolve_icon_name("", None, room.icon)
+        if not icon_name or icon_name == icons.GENERIC_FALLBACK:
+            icon_name = "home-thermometer"  # room has no icon: a room-ish climate default
+        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.28), cy=int(self.h * 0.22), color=color)
+        value = entity.display_value() or "—"
+        value_font = self._fit_value_font(value, max_size=int(self.h * 0.24), max_width=self.w - 8)
+        draw.text((self.w / 2, self.h * 0.52), value, font=value_font, fill=TEXT, anchor="mm")
+        self._draw_label(draw, room.name, y=int(self.h * 0.74), size=11, color=NAV_COLOR, max_lines=1)
+        return img
+
+    def reserved_blank(self) -> Image.Image:
+        """A solid tile in the special-folder band's contrasted background."""
+        return Image.new("RGB", (self.w, self.h), RESERVED_BG)
+
     def room(
         self,
         room: Room,
         accent: tuple[int, int, int] = ROOM_ACCENT,
         light_on: bool = False,
         presence: bool = False,
+        bg: tuple[int, int, int] = BG,
     ) -> Image.Image:
-        img, draw = self._canvas()
+        img = Image.new("RGB", (self.w, self.h), bg)
+        draw = ImageDraw.Draw(img)
         icon_name = icons.resolve_icon_name("", None, room.icon) or "door"
         if icon_name == icons.GENERIC_FALLBACK:
             icon_name = "door"  # nicer default for a room/folder than a question mark
@@ -209,9 +235,10 @@ class KeyRenderer:
         draw.text((self.w - 3, 2), chevron, font=self._icon_font(int(self.h * 0.24)), fill=(200, 230, 222), anchor="rt")
         return img
 
-    def weather_button(self, weather: Weather) -> Image.Image:
+    def weather_button(self, weather: Weather, bg: tuple[int, int, int] = BG) -> Image.Image:
         """Home-screen weather tile: condition icon + outside temperature."""
-        img, draw = self._canvas()
+        img = Image.new("RGB", (self.w, self.h), bg)
+        draw = ImageDraw.Draw(img)
         self._draw_glyph(draw, icons.glyph(weather.icon), size=int(self.h * 0.30), cy=int(self.h * 0.24), color=WEATHER_ACCENT)
         draw.text((self.w / 2, self.h * 0.55), weather.temp_text(), font=self._value_font(int(self.h * 0.26)), fill=TEXT, anchor="mm")
         self._draw_label(draw, "Weather", y=int(self.h * 0.76), size=11, color=NAV_COLOR, max_lines=1)

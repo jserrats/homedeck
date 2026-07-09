@@ -58,7 +58,8 @@ def test_home_groups_rooms_under_floor_headers():
         on_service=lambda e: None, floors=floors, unassigned_rooms=unassigned,
     )
     key_map = nav._build_key_map()
-    sequence = [key_map[k] for k in sorted(key_map)]
+    sequence = [key_map[k] for k in sorted(key_map)
+                if key_map[k].kind is not ActionKind.RESERVED_BLANK]  # ignore band fillers
 
     labels = [
         (a.kind.name, (a.floor.name if a.floor else a.room.name if a.room else None))
@@ -75,6 +76,7 @@ def test_home_groups_rooms_under_floor_headers():
         ("OPEN_ROOM", "Garage"),
         ("OPEN_ROOM", "Lights On"),
         ("OPEN_SECURITY", "Security"),
+        ("OPEN_CLIMATE", "Climate"),
         ("OPEN_SETTINGS", "Settings"),
     ]
 

@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 # Sentinel area ids for the virtual home-screen folders.
 LIGHTS_ON_AREA = "__lights_on__"
 SECURITY_AREA = "__security__"
+CLIMATE_AREA = "__climate__"
 SETTINGS_AREA = "__settings__"
 
 # Hold at least this long for a press to count as a long press (e.g. open a lock).
@@ -46,6 +47,7 @@ class FrameKind(Enum):
     HOME = auto()
     ROOM = auto()
     SECURITY = auto()
+    CLIMATE = auto()
     LIGHT_GRID = auto()
     WEATHER = auto()
     HISTORY = auto()
@@ -66,8 +68,10 @@ class Frame:
 class ActionKind(Enum):
     OPEN_ROOM = auto()
     OPEN_SECURITY = auto()
+    OPEN_CLIMATE = auto()
     OPEN_WEATHER = auto()
     OPEN_SETTINGS = auto()
+    CLIMATE_TEMP = auto()  # a temperature sensor tile, labelled by its room
     SETTINGS_ITEM = auto()  # an action button inside the Settings folder
     FLOOR_HEADER = auto()  # non-interactive section label
     ENTITY = auto()
@@ -81,6 +85,7 @@ class ActionKind(Enum):
     BACK = auto()
     PAGE = auto()
     BLANK = auto()
+    RESERVED_BLANK = auto()  # filler tile in the special-folder band (contrasted bg)
 
 
 @dataclass
@@ -149,6 +154,8 @@ class Navigation:
         # Virtual folder gathering all locks, closures and presence sensors,
         # grouped by type (one type per row).
         self.security_folder = Room(area_id=SECURITY_AREA, name="Security", icon="mdi:shield-home")
+        # Virtual folder gathering temperature sensors, fans and thermostats.
+        self.climate_folder = Room(area_id=CLIMATE_AREA, name="Climate", icon="mdi:home-thermometer")
         # Deck settings folder, always pinned last.
         self.settings_folder = Room(area_id=SETTINGS_AREA, name="Settings", icon="mdi:cog")
 
@@ -179,11 +186,15 @@ class Navigation:
             collapsed = action.floor.floor_id in self._collapsed_floors
             return self.renderer.floor_header(action.floor, collapsed=collapsed)
         if action.kind is ActionKind.OPEN_SECURITY:
-            return self.renderer.room(action.room, accent=renderer_mod.SECURITY_ACCENT)
+            return self.renderer.room(action.room, accent=renderer_mod.SECURITY_ACCENT, bg=renderer_mod.RESERVED_BG)
+        if action.kind is ActionKind.OPEN_CLIMATE:
+            return self.renderer.room(action.room, accent=renderer_mod.CLIMATE_ACCENT, bg=renderer_mod.RESERVED_BG)
+        if action.kind is ActionKind.CLIMATE_TEMP:
+            return self.renderer.climate_room_reading(action.entity, action.room)
         if action.kind is ActionKind.OPEN_WEATHER:
-            return self.renderer.weather_button(self.weather)
+            return self.renderer.weather_button(self.weather, bg=renderer_mod.RESERVED_BG)
         if action.kind is ActionKind.OPEN_SETTINGS:
-            return self.renderer.room(action.room, accent=renderer_mod.SETTINGS_ACCENT)
+            return self.renderer.room(action.room, accent=renderer_mod.SETTINGS_ACCENT, bg=renderer_mod.RESERVED_BG)
         if action.kind is ActionKind.SETTINGS_ITEM:
             d = action.data or {}
             return self.renderer.action_button(d["icon"], d["label"], d["color"])
@@ -199,9 +210,12 @@ class Navigation:
                 return self.renderer.weather_temp_cell(action.day.low_text(), "min")
             return self.renderer.weather_temp_cell(action.day.high_text(), "max")
         if action.kind is ActionKind.OPEN_ROOM:
-            if action.room.is_dynamic:  # the "Lights On" folder — no indicator dots
-                return self.renderer.room(action.room, accent=renderer_mod.LIGHTS_ACCENT)
+            if action.room.is_dynamic:  # the "Lights On" special folder (in the band)
+                return self.renderer.room(action.room, accent=renderer_mod.LIGHTS_ACCENT,
+                                          bg=renderer_mod.RESERVED_BG)
             return self._render_room_tile(action.room)
+        if action.kind is ActionKind.RESERVED_BLANK:
+            return self.renderer.reserved_blank()
         if action.kind is ActionKind.ENTITY:
             return self.renderer.device(action.entity)
         if action.kind is ActionKind.GRID_CELL:
@@ -230,6 +244,8 @@ class Navigation:
             return self._room_key_map(frame)
         if frame.kind is FrameKind.SECURITY:
             return self._security_key_map(frame)
+        if frame.kind is FrameKind.CLIMATE:
+            return self._climate_key_map(frame)
         if frame.kind is FrameKind.LIGHT_GRID:
             return self._light_grid_key_map(frame)
         if frame.kind is FrameKind.WEATHER:
@@ -289,27 +305,44 @@ class Navigation:
         return result
 
     def _weather_key_map(self, frame: Frame) -> dict[int, Action]:
-        """Fullscreen forecast: one column per day, rows = day / icon / min / max."""
+        """Fullscreen forecast, Back at key 0. The 4 cells per day are day /
+        icon / max / min, laid out one day per **column** in landscape and one
+        day per **row** in portrait (so the taller grid isn't wasted)."""
         days = frame.forecast or []
         cols = getattr(self.display, "cols", 0)
         rows = self.display.key_count // cols if cols else 0
 
-        if cols < 2 or rows < 4:
-            # Small deck: fall back to one compact tile per day, Back at key 0.
-            result: dict[int, Action] = {0: Action(ActionKind.BACK)}
-            for i, day in enumerate(days[: self.display.key_count - 1]):
-                result[1 + i] = Action(ActionKind.WEATHER_DAY, day=day)
+        def cell(day, part):
+            return Action(ActionKind.WEATHER_CELL, day=day, data={"part": part})
+
+        result: dict[int, Action] = {0: Action(ActionKind.BACK)}
+
+        if rows > cols and cols >= 4:
+            # Portrait: one day per row -> [weekday][icon][max][min], rows 1..
+            for i, day in enumerate(days):
+                r = 1 + i
+                if r >= rows:
+                    break
+                base = r * cols
+                result[base + 0] = cell(day, "day")
+                result[base + 1] = cell(day, "icon")
+                result[base + 2] = cell(day, "max")
+                result[base + 3] = cell(day, "min")
             return result
 
-        # Back stays at key 0 (top-left, like every other view); day columns
-        # start at column 1. Rows within a column: day / icon / max / min.
-        result = {0: Action(ActionKind.BACK)}
-        for i, day in enumerate(days[: cols - 1]):
-            c = i + 1
-            result[0 * cols + c] = Action(ActionKind.WEATHER_CELL, day=day, data={"part": "day"})
-            result[1 * cols + c] = Action(ActionKind.WEATHER_CELL, day=day, data={"part": "icon"})
-            result[2 * cols + c] = Action(ActionKind.WEATHER_CELL, day=day, data={"part": "max"})
-            result[3 * cols + c] = Action(ActionKind.WEATHER_CELL, day=day, data={"part": "min"})
+        if rows >= 4:
+            # Landscape: one day per column, rows = day / icon / max / min.
+            for i, day in enumerate(days[: cols - 1]):
+                c = i + 1
+                result[0 * cols + c] = cell(day, "day")
+                result[1 * cols + c] = cell(day, "icon")
+                result[2 * cols + c] = cell(day, "max")
+                result[3 * cols + c] = cell(day, "min")
+            return result
+
+        # Small deck: one compact tile per day.
+        for i, day in enumerate(days[: self.display.key_count - 1]):
+            result[1 + i] = Action(ActionKind.WEATHER_DAY, day=day)
         return result
 
     def _home_key_map(self, frame: Frame) -> dict[int, Action]:
@@ -318,6 +351,7 @@ class Navigation:
         specials = [
             Action(ActionKind.OPEN_ROOM, room=self.lights_on_room),
             Action(ActionKind.OPEN_SECURITY, room=self.security_folder),
+            Action(ActionKind.OPEN_CLIMATE, room=self.climate_folder),
         ]
         if self.weather is not None:
             specials.append(Action(ActionKind.OPEN_WEATHER))
@@ -347,6 +381,15 @@ class Navigation:
             [Action(ActionKind.ENTITY, entity=e) for e in group]
             for group in self._collect_security_groups()
         ]
+        cols = getattr(self.display, "cols", 0)
+        if not cols:  # no grid info: flat sequential, types still contiguous
+            flat = [a for group in groups for a in group]
+            return layout_page(flat, self.display.key_count, {0: Action(ActionKind.BACK)}, frame.page)
+        return layout_security(groups, self.display.key_count, cols, frame.page)
+
+    def _climate_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Climate view: temperature sensors, fans and thermostats, one type per column."""
+        groups = self._collect_climate_groups()
         cols = getattr(self.display, "cols", 0)
         if not cols:  # no grid info: flat sequential, types still contiguous
             flat = [a for group in groups for a in group]
@@ -397,6 +440,28 @@ class Navigation:
         for group in groups:
             group.sort(key=lambda e: e.name.lower())
         return [g for g in groups if g]
+
+    def _collect_climate_groups(self) -> list[list[Action]]:
+        """Temperature sensors (labelled by room), then fans, then thermostats.
+
+        Temperature tiles show their room name/icon instead of the sensor's, so
+        they carry the owning room; fans and thermostats are normal entity tiles.
+        """
+        temps: list[Action] = []
+        fans: list[Action] = []
+        thermostats: list[Action] = []
+        for room in self.rooms:
+            for entity in room.entities:
+                if entity.is_temperature_sensor:
+                    temps.append(Action(ActionKind.CLIMATE_TEMP, entity=entity, room=room))
+                elif entity.domain == "fan":
+                    fans.append(Action(ActionKind.ENTITY, entity=entity))
+                elif entity.domain == "climate":
+                    thermostats.append(Action(ActionKind.ENTITY, entity=entity))
+        temps.sort(key=lambda a: a.room.name.lower())
+        fans.sort(key=lambda a: a.entity.name.lower())
+        thermostats.sort(key=lambda a: a.entity.name.lower())
+        return [g for g in (temps, fans, thermostats) if g]
 
     def _items_for(self, frame: Frame) -> list[Action]:
         if frame.kind is FrameKind.HOME:
@@ -501,6 +566,8 @@ class Navigation:
             self._push(Frame(FrameKind.ROOM, room=action.room))
         elif action.kind is ActionKind.OPEN_SECURITY:
             self._push(Frame(FrameKind.SECURITY))
+        elif action.kind is ActionKind.OPEN_CLIMATE:
+            self._push(Frame(FrameKind.CLIMATE))
         elif action.kind is ActionKind.OPEN_WEATHER:
             self._open_weather()
         elif action.kind is ActionKind.OPEN_SETTINGS:
@@ -509,8 +576,8 @@ class Navigation:
             self._run_setting(action)
         elif action.kind in (ActionKind.WEATHER_DAY, ActionKind.WEATHER_CELL,
                              ActionKind.HISTORY_TITLE, ActionKind.HISTORY_EVENT,
-                             ActionKind.TIMER_STATUS):
-            return  # forecast/history/timer-status tiles are not interactive
+                             ActionKind.TIMER_STATUS, ActionKind.CLIMATE_TEMP):
+            return  # forecast/history/timer-status/temperature tiles are not interactive
         elif action.kind is ActionKind.FLOOR_HEADER:
             self._toggle_floor(action.floor)
         elif action.kind is ActionKind.BACK:
@@ -706,8 +773,13 @@ class Navigation:
                             self.display.set_image(key, self._render_room_tile(action.room))
                 return
             for key, action in self.key_map.items():
-                if action.kind is ActionKind.ENTITY and action.entity and action.entity.entity_id == entity_id:
+                if action.entity is None or action.entity.entity_id != entity_id:
+                    continue
+                if action.kind is ActionKind.ENTITY:
                     self.display.set_image(key, self.renderer.device(action.entity))
+                    return
+                if action.kind is ActionKind.CLIMATE_TEMP:
+                    self.display.set_image(key, self.renderer.climate_room_reading(action.entity, action.room))
                     return
 
     def tick(self) -> None:
@@ -797,39 +869,42 @@ def layout_home(
     cols: int,
     page: int,
 ) -> dict[int, Action]:
-    """Home layout: rooms/floors in the top rows, special folders bottom-left.
+    """Home layout: rooms/floors on top, special folders in a contrasted band.
 
-    The special folders (Lights On, Security) are pinned to the start of the
-    bottom row so they're always in the same place; room/floor content fills the
-    rows above and paginates there, with Prev/Next on the bottom-right.
+    The band is the bottom row in landscape and the bottom two rows in portrait
+    (taller-than-wide). Its cells get a contrasted background (RESERVED_BLANK)
+    so the special zone is visually distinct; the specials are bottom-anchored
+    within it. Room/floor content fills the rows above and paginates there.
     """
     rows = total_keys // cols
-    bottom = (rows - 1) * cols  # first key of the bottom row
+    reserved_rows = 2 if rows > cols else 1                       # portrait: 2 rows
+    special_rows = max(1, _ceil_div(len(specials), cols))
+    reserved_rows = max(reserved_rows, special_rows)
+    zone_start = (rows - reserved_rows) * cols                    # first key of the band
+    special_start = (rows - special_rows) * cols                  # specials pinned to the bottom
+    content_capacity = zone_start
 
-    if rows < 2:  # single-row deck: just lay everything out sequentially
+    if content_capacity <= 0:  # deck too short for a reserved band
         return layout_page(content + specials, total_keys, {}, page)
 
     result: dict[int, Action] = {}
-    for i, action in enumerate(specials):
-        result[bottom + i] = action
-
-    content_capacity = bottom  # the top rows (keys 0 .. bottom-1)
-    if len(content) <= content_capacity:
-        for key, action in enumerate(content):
-            result[key] = action
-        return result
+    for key in range(zone_start, total_keys):                     # contrasted band background
+        result[key] = Action(ActionKind.RESERVED_BLANK)
+    for i, action in enumerate(specials):                         # specials over the band
+        result[special_start + i] = action
 
     page_count = max(1, _ceil_div(len(content), content_capacity))
     page = max(0, min(page, page_count - 1))
-    start = page * content_capacity
-    for key, action in enumerate(content[start : start + content_capacity]):
+    for key, action in enumerate(content[page * content_capacity : (page + 1) * content_capacity]):
         result[key] = action
 
-    # Pagination lives on the bottom-right, clear of the bottom-left specials.
-    if page > 0:
-        result[total_keys - 2] = Action(ActionKind.PAGE, delta=-1)
-    if page < page_count - 1:
-        result[total_keys - 1] = Action(ActionKind.PAGE, delta=1)
+    if page_count > 1:  # pagination goes in band cells not used by the specials
+        used = set(range(special_start, special_start + len(specials)))
+        free = [k for k in range(zone_start, total_keys) if k not in used]
+        if page > 0 and len(free) >= 2:
+            result[free[-2]] = Action(ActionKind.PAGE, delta=-1)
+        if page < page_count - 1 and free:
+            result[free[-1]] = Action(ActionKind.PAGE, delta=1)
     return result
 
 

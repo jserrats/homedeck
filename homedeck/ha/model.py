@@ -43,7 +43,7 @@ CLIMATE_DOMAINS = frozenset({"fan", "climate"})
 # Domains whose long-press opens a state-history / logbook view.
 HISTORY_DOMAINS = frozenset({"switch", "binary_sensor"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
-CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS | {TIMER_DOMAIN}
+CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS | {TIMER_DOMAIN} | {"climate"}
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
 
 # Entity categories that HA tucks away (not shown as primary controls in the UI).
@@ -285,6 +285,8 @@ class DeviceEntity:
             # Pause when running; otherwise start (which also resumes a paused timer).
             service = "pause" if (self.state or "").lower() == "active" else "start"
             return (TIMER_DOMAIN, service, self.entity_id, {})
+        if self.domain == "climate":
+            return self.climate_power_call()
         return None
 
     @property
@@ -315,6 +317,64 @@ class DeviceEntity:
         if self.domain == LOCK_DOMAIN:
             return (LOCK_DOMAIN, "open", self.entity_id, {})
         return None
+
+    # -- climate / thermostat -----------------------------------------------
+
+    @property
+    def is_climate(self) -> bool:
+        return self.domain == "climate"
+
+    @property
+    def climate_is_on(self) -> bool:
+        """A thermostat that is not off/unavailable (i.e. actively heating/cooling)."""
+        state = (self.state or "").lower()
+        return state not in OFF_STATES and state not in UNAVAILABLE_STATES
+
+    @property
+    def target_temperature(self) -> float | None:
+        """The thermostat's single target set-point, if it has one."""
+        try:
+            return float(self.attributes.get("temperature"))
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def min_temp(self) -> float:
+        try:
+            return float(self.attributes.get("min_temp"))
+        except (TypeError, ValueError):
+            return 7.0
+
+    @property
+    def max_temp(self) -> float:
+        try:
+            return float(self.attributes.get("max_temp"))
+        except (TypeError, ValueError):
+            return 35.0
+
+    @property
+    def preset_modes(self) -> list[str]:
+        return [str(m) for m in (self.attributes.get("preset_modes") or [])]
+
+    @property
+    def preset_mode(self) -> str | None:
+        mode = self.attributes.get("preset_mode")
+        return str(mode) if mode else None
+
+    def climate_power_call(self) -> tuple[str, str, str, dict]:
+        """Toggle a thermostat on/off (single press)."""
+        service = "turn_off" if self.climate_is_on else "turn_on"
+        return ("climate", service, self.entity_id, {})
+
+    def climate_set_temperature_call(self, temperature: float) -> tuple[str, str, str, dict]:
+        """Set the target temperature, clamped to the thermostat's range."""
+        temp = round(max(self.min_temp, min(self.max_temp, temperature)), 2)
+        if temp.is_integer():
+            temp = int(temp)
+        return ("climate", "set_temperature", self.entity_id, {"temperature": temp})
+
+    def climate_set_preset_call(self, preset: str) -> tuple[str, str, str, dict]:
+        return ("climate", "set_preset_mode", self.entity_id, {"preset_mode": preset})
 
     @property
     def supports_dynamic_color(self) -> bool:
@@ -422,6 +482,7 @@ class DeviceEntity:
             or self.supports_rgb_color
             or self.supports_history
             or self.is_timer
+            or self.is_climate
         )
 
     def update_from_state(self, state: str, attributes: dict | None) -> None:

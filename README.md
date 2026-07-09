@@ -14,6 +14,11 @@ auto-populated with that area's devices:
 - **Timers** — the key shows the remaining time. A single press pauses/resumes (or starts an
   idle timer); a **long press** opens a detail view with the remaining time and
   **Pause/Resume, Cancel and Finish** buttons.
+- **Thermostats** (`climate`) — the key shows the current temperature. A single press
+  **turns the thermostat on/off**; a **long press** opens a control view with the target
+  set-point, **− / +** buttons to adjust it **one whole degree at a time**, an on/off toggle,
+  and one button per **Home Assistant preset mode** (eco, comfort, away…) with the active
+  preset highlighted.
 - **Locks** — a single press locks/unlocks; a **long press** (hold ≈0.5 s) opens the door
   (`lock.open`). Once you've held long enough, the key changes to a blue **"Release to open"**
   tile so you know the long-press is armed before you let go. The padlock is **green** when
@@ -52,7 +57,8 @@ above. The band has a slightly lighter background so it reads as a distinct zone
   type with each type in its own column** (temperature sensors, then fans, then thermostats).
   Each **temperature tile shows the room it belongs to** — the room's icon and name instead of
   the sensor's — with the current reading (e.g. the sofa icon, "Living Room", "21.4 °C"). Fans
-  toggle on press; thermostats show their current temperature.
+  toggle on press; thermostats toggle on press and open their control view on a long press (see
+  above).
 - A **Weather** tile showing the current condition icon and outside temperature from a
   `weather.*` entity; press it for a **fullscreen forecast** that fills the grid — **one column
   per day**, with rows for the weekday, condition icon, min and max temperature. Set

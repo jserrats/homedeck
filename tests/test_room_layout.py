@@ -91,10 +91,13 @@ def test_navigation_room_view_places_sensors_at_bottom():
     nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.ROOM, room=room)]
     key_map = nav._build_key_map()
 
-    readout_domains = {"sensor", "binary_sensor", "climate"}
+    # climate is now interactive (press toggles, hold opens controls), so it
+    # joins the controls at the top; only the plain read-only entities go bottom.
+    readout_domains = {"sensor", "binary_sensor"}
     sensor_keys = [k for k, a in key_map.items() if a.entity and a.entity.domain in readout_domains]
-    control_keys = [k for k, a in key_map.items() if a.entity and a.entity.domain not in readout_domains]
+    control_keys = [k for k, a in key_map.items()
+                    if a.entity and a.entity.domain in {"light", "switch", "climate"}]
 
-    # 3 read-only entities sit in the bottom row; 2 controls stay at the top.
+    # 2 read-only entities sit in the bottom row; 3 controls stay at the top.
     assert all(k >= 24 for k in sensor_keys)
     assert all(k < 24 for k in control_keys)

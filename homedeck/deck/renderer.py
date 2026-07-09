@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 from . import icons
 from ..color import hs_to_rgb, kelvin_to_rgb, scale
 from ..ha.history import HistoryEvent
-from ..ha.model import BUTTON_DOMAINS, CLIMATE_DOMAINS, DeviceEntity, Floor, Room, Status
+from ..ha.model import BUTTON_DOMAINS, CLIMATE_DOMAINS, DeviceEntity, Floor, Room, Status, _format_number
 from ..ha.weather import ForecastDay, Weather
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
@@ -45,6 +45,18 @@ CLIMATE_ICON = (125, 200, 247)    # active fan / climate icon (sky blue)
 NAV_COLOR = (210, 210, 214)
 DOT_LIGHT = (255, 210, 0)        # room indicator: a light is on (yellow)
 DOT_PRESENCE = (168, 85, 247)    # room indicator: presence detected (purple)
+
+# Icons for common HA climate preset modes (falls back to a generic tuner).
+PRESET_ICONS = {
+    "eco": "leaf",
+    "away": "home-export-outline",
+    "home": "home",
+    "comfort": "sofa",
+    "sleep": "power-sleep",
+    "boost": "rocket-launch-outline",
+    "activity": "run",
+    "none": "tune",
+}
 
 STATUS_COLORS = {
     Status.ON: ACCENT,
@@ -304,6 +316,36 @@ class KeyRenderer:
         img, draw = self._canvas()
         self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.42), cy=int(self.h * 0.36), color=color)
         self._draw_label(draw, label, y=int(self.h * 0.66), size=13)
+        return img
+
+    def climate_status(self, entity: DeviceEntity) -> Image.Image:
+        """Thermostat status: hvac mode, the big target set-point, current temp."""
+        img, draw = self._canvas()
+        color = CLIMATE_ICON if entity.climate_is_on else NEUTRAL
+        mode = (entity.state or "").replace("_", " ").upper()
+        self._draw_label(draw, mode, y=int(self.h * 0.06), size=12, color=color, max_lines=1)
+        target = entity.target_temperature
+        target_text = f"{_format_number(target)}°" if target is not None else "—"
+        draw.text((self.w / 2, self.h * 0.46), target_text, font=self._value_font(int(self.h * 0.34)), fill=TEXT, anchor="mm")
+        current = entity.attributes.get("current_temperature")
+        if current is not None:
+            self._draw_label(draw, f"now {_format_number(current)}°", y=int(self.h * 0.74), size=11, color=NAV_COLOR, max_lines=1)
+        return img
+
+    def climate_power(self, entity: DeviceEntity) -> Image.Image:
+        """On/off toggle for the thermostat, labelled with the action it performs."""
+        on = entity.climate_is_on
+        return self.action_button("power", "Turn Off" if on else "Turn On", UNAVAILABLE if on else SECURE)
+
+    def climate_preset(self, name: str, active: bool = False) -> Image.Image:
+        """A Home Assistant preset-mode button; the active preset is highlighted."""
+        img, draw = self._canvas()
+        icon_name = PRESET_ICONS.get((name or "").lower(), "tune")
+        color = CLIMATE_ACCENT if active else NAV_COLOR
+        if active:
+            draw.rectangle([1, 1, self.w - 2, self.h - 2], outline=CLIMATE_ACCENT, width=max(2, int(self.h * 0.03)))
+        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.40), cy=int(self.h * 0.36), color=color)
+        self._draw_label(draw, (name or "").replace("_", " ").title(), y=int(self.h * 0.66), size=12)
         return img
 
     def nav(self, kind: str) -> Image.Image:

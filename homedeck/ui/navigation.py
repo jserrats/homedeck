@@ -48,6 +48,7 @@ class FrameKind(Enum):
     ROOM = auto()
     SECURITY = auto()
     CLIMATE = auto()
+    CLIMATE_DETAIL = auto()
     LIGHT_GRID = auto()
     WEATHER = auto()
     HISTORY = auto()
@@ -82,6 +83,10 @@ class ActionKind(Enum):
     HISTORY_EVENT = auto() # one timeline entry in the history view
     TIMER_STATUS = auto()  # remaining-time display in the timer detail view
     TIMER_ACTION = auto()  # pause/resume/cancel/finish button
+    CLIMATE_STATUS = auto()  # target/current-temp display in the thermostat view
+    CLIMATE_ADJUST = auto()  # +/- target-temperature button
+    CLIMATE_POWER = auto()   # turn the thermostat on/off
+    CLIMATE_PRESET = auto()  # apply an HA preset mode
     BACK = auto()
     PAGE = auto()
     BLANK = auto()
@@ -232,6 +237,16 @@ class Navigation:
         if action.kind is ActionKind.TIMER_ACTION:
             d = action.data or {}
             return self.renderer.action_button(d["icon"], d["label"], d["color"])
+        if action.kind is ActionKind.CLIMATE_STATUS:
+            return self.renderer.climate_status(action.entity)
+        if action.kind is ActionKind.CLIMATE_ADJUST:
+            d = action.data or {}
+            return self.renderer.action_button(d["icon"], d["label"], renderer_mod.CLIMATE_ACCENT)
+        if action.kind is ActionKind.CLIMATE_POWER:
+            return self.renderer.climate_power(action.entity)
+        if action.kind is ActionKind.CLIMATE_PRESET:
+            preset = (action.data or {}).get("preset")
+            return self.renderer.climate_preset(preset, active=action.entity.preset_mode == preset)
         if action.kind is ActionKind.BACK:
             return self.renderer.nav("back")
         if action.kind is ActionKind.PAGE:
@@ -246,6 +261,8 @@ class Navigation:
             return self._security_key_map(frame)
         if frame.kind is FrameKind.CLIMATE:
             return self._climate_key_map(frame)
+        if frame.kind is FrameKind.CLIMATE_DETAIL:
+            return self._climate_detail_key_map(frame)
         if frame.kind is FrameKind.LIGHT_GRID:
             return self._light_grid_key_map(frame)
         if frame.kind is FrameKind.WEATHER:
@@ -292,6 +309,29 @@ class Navigation:
             4: Action(ActionKind.TIMER_ACTION, entity=entity,
                       data={"service": "finish", "label": "Finish", "icon": "flag-checkered", "color": renderer_mod.WEATHER_ACCENT}),
         }
+
+    def _climate_detail_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Thermostat detail: Back, a target/current-temp status, then −/+ set-point,
+        an on/off toggle, and one button per Home Assistant preset mode."""
+        entity = frame.entity
+        result: dict[int, Action] = {
+            0: Action(ActionKind.BACK),
+            1: Action(ActionKind.CLIMATE_STATUS, entity=entity),
+            2: Action(ActionKind.CLIMATE_ADJUST, entity=entity, delta=-1,
+                      data={"label": "−1°", "icon": "thermometer-minus"}),
+            3: Action(ActionKind.CLIMATE_ADJUST, entity=entity, delta=1,
+                      data={"label": "+1°", "icon": "thermometer-plus"}),
+            4: Action(ActionKind.CLIMATE_POWER, entity=entity),
+        }
+        # Presets start on the next row (or continue sequentially without grid info).
+        cols = getattr(self.display, "cols", 0)
+        start = cols if cols else 5
+        for i, preset in enumerate(entity.preset_modes if entity else []):
+            key = start + i
+            if key >= self.display.key_count:
+                break
+            result[key] = Action(ActionKind.CLIMATE_PRESET, entity=entity, data={"preset": preset})
+        return result
 
     def _history_key_map(self, frame: Frame) -> dict[int, Action]:
         """History view: Back, an entity-name header, then newest-first events."""
@@ -523,6 +563,8 @@ class Navigation:
                 self._open_history(entity)  # opens the history view; view changes
             elif long and entity.is_timer:
                 self._open_timer(entity)  # opens the timer detail view; view changes
+            elif long and entity.is_climate:
+                self._open_climate_detail(entity)  # opens the thermostat controls; view changes
             elif entity.is_controllable:
                 self._invoke(entity, long=long)
                 self._restore_key(key)  # clear any hold feedback
@@ -549,6 +591,8 @@ class Navigation:
                 img = self.renderer.hold_feedback("history", "Release for history")
             elif entity.is_timer:
                 img = self.renderer.hold_feedback("timer-cog", "Release for timer")
+            elif entity.is_climate:
+                img = self.renderer.hold_feedback("thermostat", "Release for controls")
             else:
                 img = self.renderer.hold_feedback()  # lock: "Release to open"
             self.display.set_image(key, img)
@@ -576,8 +620,15 @@ class Navigation:
             self._run_setting(action)
         elif action.kind in (ActionKind.WEATHER_DAY, ActionKind.WEATHER_CELL,
                              ActionKind.HISTORY_TITLE, ActionKind.HISTORY_EVENT,
-                             ActionKind.TIMER_STATUS, ActionKind.CLIMATE_TEMP):
-            return  # forecast/history/timer-status/temperature tiles are not interactive
+                             ActionKind.TIMER_STATUS, ActionKind.CLIMATE_TEMP,
+                             ActionKind.CLIMATE_STATUS):
+            return  # forecast/history/status/temperature tiles are not interactive
+        elif action.kind is ActionKind.CLIMATE_ADJUST:
+            self._adjust_climate_temp(action)
+        elif action.kind is ActionKind.CLIMATE_POWER:
+            self._send(action.entity.climate_power_call())
+        elif action.kind is ActionKind.CLIMATE_PRESET:
+            self._send(action.entity.climate_set_preset_call((action.data or {}).get("preset")))
         elif action.kind is ActionKind.FLOOR_HEADER:
             self._toggle_floor(action.floor)
         elif action.kind is ActionKind.BACK:
@@ -678,6 +729,26 @@ class Navigation:
     def _open_timer(self, entity: DeviceEntity) -> None:
         self._push(Frame(FrameKind.TIMER, entity=entity))
 
+    def _open_climate_detail(self, entity: DeviceEntity) -> None:
+        self._push(Frame(FrameKind.CLIMATE_DETAIL, entity=entity))
+
+    def _adjust_climate_temp(self, action: Action) -> None:
+        """Nudge a thermostat's target set-point by a whole degree (± via action.delta)."""
+        entity = action.entity
+        target = entity.target_temperature
+        if target is None:  # nothing to nudge (e.g. a range-only thermostat)
+            return
+        self._send(entity.climate_set_temperature_call(target + action.delta))
+
+    def _send(self, call) -> None:
+        """Fire a service call, swallowing errors so a bad call can't kill the deck thread."""
+        if call is None:
+            return
+        try:
+            self.on_service(call)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Service call %s failed: %s", call, exc)
+
     def _run_setting(self, action: Action) -> None:
         which = (action.data or {}).get("action")
         callback = {"reload": self.on_reload, "rotate": self.on_rotate}.get(which)
@@ -754,13 +825,13 @@ class Navigation:
                 and frame.room.is_dynamic
                 and entity_id.startswith("light.")  # only lights change membership
             )
-            # The open timer detail view rebuilds when its timer changes.
-            viewing_timer = (
-                frame.kind is FrameKind.TIMER
+            # The open timer / thermostat detail view rebuilds when its entity changes.
+            viewing_detail = (
+                frame.kind in (FrameKind.TIMER, FrameKind.CLIMATE_DETAIL)
                 and frame.entity is not None
                 and frame.entity.entity_id == entity_id
             )
-        if viewing_dynamic or viewing_timer:
+        if viewing_dynamic or viewing_detail:
             self.render()  # rebuild the view with the new state
             return
         with self._lock:

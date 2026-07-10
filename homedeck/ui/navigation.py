@@ -785,7 +785,9 @@ class Navigation:
             self.weather.update(state, attributes)
             for key, action in self.key_map.items():
                 if action.kind is ActionKind.OPEN_WEATHER:
-                    self.display.set_image(key, self.renderer.weather_button(self.weather))
+                    # Keep the reserved-band background (matches the initial render);
+                    # omitting bg here repainted the tile with the default dark BG.
+                    self.display.set_image(key, self.renderer.weather_button(self.weather, bg=renderer_mod.RESERVED_BG))
                     return
 
     def _apply_light_cell(self, action: Action) -> None:

@@ -17,13 +17,20 @@ services:
       # Fallback timezone for history clock times if HA's own timezone can't be
       # read. Override in .env with TZ=...
       TZ: ${TZ:-Europe/Madrid}
+      # Persist runtime settings (e.g. display rotation) on the mounted volume.
+      HOMEDECK_STATE_FILE: /data/state.json
 
     # The Stream Deck is a USB HID device. Bind-mount the USB bus and grant
     # access to USB character devices (major 189) so the container can open it
     # — including decks plugged in after the container starts.
     volumes:
       - /dev/bus/usb:/dev/bus/usb
+      # Named volume holding state.json so settings survive restarts/upgrades.
+      - homedeck-state:/data
     device_cgroup_rules:
       - 'c 189:* rmw'
     # If your kernel/setup still can't open the deck, replace the two keys above
     # with:  privileged: true
+
+volumes:
+  homedeck-state:

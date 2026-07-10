@@ -115,6 +115,18 @@ def test_update_weather_refreshes_button():
     assert before != after  # button re-rendered with the new condition/temp
 
 
+@requires_assets
+def test_update_weather_keeps_reserved_band_background():
+    from homedeck.deck import renderer as rmod
+    nav = _nav()
+    nav.render()  # home
+    wkey = next(k for k, a in nav.key_map.items() if a.kind is ActionKind.OPEN_WEATHER)
+    nav.update_weather("rainy", {"temperature": 5})
+    # corner pixels are outside the icon/text, so they show the tile background:
+    # a live weather update must keep the reserved-band grey, not revert to dark BG.
+    assert nav.display.images[wkey].getpixel((0, 0)) == rmod.RESERVED_BG
+
+
 def test_portrait_forecast_is_one_day_per_row():
     from homedeck.ha.weather import parse_forecast
     display = ExportDisplay(cols=4)  # portrait: 4 cols x 8 rows

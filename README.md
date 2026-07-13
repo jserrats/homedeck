@@ -83,6 +83,13 @@ floor-header tile per floor (ordered by floor level) — no extra level to drill
 a floor header collapses/expands** that floor's rooms in place (a chevron shows the state).
 Rooms with no floor appear under an "Other" header. If HA has no floors, rooms are listed flat.
 
+Set **`HOMEDECK_OCCUPANCY_ENTITY`** to an occupancy/presence entity (e.g.
+`binary_sensor.office_occupancy`) to have the deck's **display follow the room**: the backlight
+turns **off when the sensor reads `off`** (room empty) and **back on when it reads `on`**,
+without losing the configured brightness. Transient `unavailable`/`unknown` states leave the
+display as-is, and the "off" state is preserved across a deck unplug/replug. Leave it unset to
+keep the display always on.
+
 HomeDeck talks to Home Assistant over the **WebSocket API** using a long-lived token, and
 updates keys live as states change. It runs on Linux (Raspberry Pi/Raspbian), macOS, and
 Windows.

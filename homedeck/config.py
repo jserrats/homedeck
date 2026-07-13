@@ -14,6 +14,7 @@ class Config:
     ha_token: str
     brightness: int
     weather_entity: str | None
+    occupancy_entity: str | None
     timezone: str | None
     rotation: int
 
@@ -45,6 +46,9 @@ class Config:
 
         brightness = _clamp_int(os.environ.get("HOMEDECK_BRIGHTNESS"), default=60, lo=0, hi=100)
         weather_entity = (os.environ.get("HOMEDECK_WEATHER_ENTITY") or "").strip() or None
+        # Optional occupancy/presence entity: when set, the deck's display follows
+        # it (on when occupied, off when clear).
+        occupancy_entity = (os.environ.get("HOMEDECK_OCCUPANCY_ENTITY") or "").strip() or None
         # Fallback timezone if HA's own time_zone can't be read; TZ also sets the
         # container's local time. Defaults to Europe/Madrid.
         timezone = (os.environ.get("HOMEDECK_TZ") or os.environ.get("TZ") or "Europe/Madrid").strip()
@@ -52,7 +56,8 @@ class Config:
         rotation = (rotation // 90) * 90  # normalize to 0/90/180/270
         return cls(
             ha_url=ha_url, ha_token=ha_token, brightness=brightness,
-            weather_entity=weather_entity, timezone=timezone, rotation=rotation,
+            weather_entity=weather_entity, occupancy_entity=occupancy_entity,
+            timezone=timezone, rotation=rotation,
         )
 
 

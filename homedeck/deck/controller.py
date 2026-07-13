@@ -42,7 +42,8 @@ def _deck_id(deck) -> str | None:
 
 class DeckController:
     def __init__(self, brightness: int = 60, rotation_degrees: int = 0) -> None:
-        self._brightness = brightness
+        self._brightness = brightness  # configured "on" brightness
+        self._display_on = True        # backlight state (occupancy can toggle it)
         self._lock = threading.Lock()
         self.deck = None
         self._press_callback: PressCallback | None = None
@@ -114,7 +115,8 @@ class DeckController:
             deck = decks[0]
         deck.open()
         deck.reset()
-        deck.set_brightness(self._brightness)
+        # Respect the current backlight state so a reconnect while "off" stays off.
+        deck.set_brightness(self._brightness if self._display_on else 0)
         self.key_size = tuple(deck.key_image_format()["size"])
         self._phys_rows, self._phys_cols = deck.key_layout()
         self._phys_key_count = deck.key_count()
@@ -174,13 +176,30 @@ class DeckController:
         self._on_reconnect = callback
 
     def set_brightness(self, brightness: int) -> None:
-        self._brightness = brightness
         with self._lock:
-            if self.deck is not None:
-                try:
-                    self.deck.set_brightness(brightness)
-                except Exception:  # noqa: BLE001
-                    self._teardown_locked()
+            self._brightness = brightness
+            self._apply_brightness_locked()
+
+    def set_display_on(self, on: bool) -> None:
+        """Turn the deck's backlight on/off (e.g. following an occupancy sensor).
+
+        The configured brightness is preserved, so turning the display back on
+        restores it. A no-op if the state is unchanged or the deck is unplugged.
+        """
+        with self._lock:
+            if on == self._display_on:
+                return
+            self._display_on = on
+            logger.info("Display %s", "on" if on else "off")
+            self._apply_brightness_locked()
+
+    def _apply_brightness_locked(self) -> None:
+        if self.deck is None:  # unplugged: applied on the next open
+            return
+        try:
+            self.deck.set_brightness(self._brightness if self._display_on else 0)
+        except Exception:  # noqa: BLE001 - a failed write means it was unplugged
+            self._teardown_locked()
 
     def close(self) -> None:
         with self._lock:

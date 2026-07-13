@@ -149,7 +149,30 @@ def run_deck(config: Config) -> int:
         tz=_resolve_timezone(client, config.timezone),
     )
 
+    def apply_occupancy(state_value: str) -> None:
+        """Follow the occupancy sensor: on when occupied, off when clear.
+
+        Other states (unavailable/unknown) leave the display untouched so a
+        flaky sensor never blanks the deck.
+        """
+        s = (state_value or "").lower()
+        if s == "on":
+            deck.set_display_on(True)
+        elif s == "off":
+            deck.set_display_on(False)
+
+    if config.occupancy_entity:
+        try:
+            current = client.get_states().get(config.occupancy_entity, {}).get("state", "")
+            apply_occupancy(current)
+            logger.info("Display follows occupancy sensor %s (currently %s)",
+                        config.occupancy_entity, current or "unknown")
+        except Exception as exc:  # noqa: BLE001 - initial read is best-effort
+            logger.warning("Could not read initial occupancy state: %s", exc)
+
     def on_state_changed(entity_id: str, state: str, attributes: dict) -> None:
+        if config.occupancy_entity and entity_id == config.occupancy_entity:
+            apply_occupancy(state)  # may also be a visible entity, so don't return
         w = navigation.weather
         if w is not None and entity_id == w.entity_id:
             navigation.update_weather(state, attributes)

@@ -12,6 +12,7 @@ class FakeDeck:
         self.closed = False
         self.callback = None
         self.images = {}
+        self.brightness = None
 
     def open(self):
         self.opened = True
@@ -22,6 +23,7 @@ class FakeDeck:
     def set_brightness(self, b):
         if not self.alive:
             raise OSError("gone")
+        self.brightness = b
 
     def key_image_format(self):
         return {"size": (96, 96)}
@@ -206,3 +208,55 @@ def test_initial_rotation_applied(deck_env):
     deck_env.append(FakeDeck())
     ctl = DeckController(rotation_degrees=90)
     assert ctl.rotation == 90 and ctl.cols == 4
+
+
+# -- display on/off (occupancy) ----------------------------------------------
+
+def test_display_off_dims_and_on_restores_brightness(deck_env):
+    d = FakeDeck()
+    deck_env.append(d)
+    ctl = DeckController(brightness=55)
+    assert d.brightness == 55  # opened at the configured brightness
+
+    ctl.set_display_on(False)
+    assert d.brightness == 0            # backlight off
+    ctl.set_display_on(True)
+    assert d.brightness == 55           # configured brightness restored
+
+
+def test_display_toggle_is_idempotent(deck_env):
+    d = FakeDeck()
+    deck_env.append(d)
+    ctl = DeckController(brightness=40)
+    ctl.set_display_on(True)            # already on -> no change
+    assert d.brightness == 40
+    ctl.set_display_on(False)
+    ctl.set_display_on(False)           # still off, no error
+    assert d.brightness == 0
+
+
+def test_display_stays_off_across_reconnect(deck_env):
+    d1 = FakeDeck()
+    deck_env.append(d1)
+    ctl = DeckController(brightness=70)
+    ctl.set_display_on(False)
+
+    # unplug and replug: the new deck must come back with the backlight off
+    deck_env.clear()
+    ctl._watchdog_once()
+    d2 = FakeDeck()
+    deck_env.append(d2)
+    ctl._watchdog_once()
+    assert ctl.deck is d2
+    assert d2.brightness == 0
+
+
+def test_set_brightness_while_off_stays_dark(deck_env):
+    d = FakeDeck()
+    deck_env.append(d)
+    ctl = DeckController(brightness=60)
+    ctl.set_display_on(False)
+    ctl.set_brightness(80)              # reconfigure while off
+    assert d.brightness == 0            # display stays dark
+    ctl.set_display_on(True)
+    assert d.brightness == 80           # new configured brightness applies

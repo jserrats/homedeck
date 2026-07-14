@@ -17,6 +17,7 @@ mutate the display, so all rendering goes through a single lock.
 
 from __future__ import annotations
 
+import io
 import logging
 import threading
 import time
@@ -24,6 +25,8 @@ from dataclasses import dataclass
 from datetime import tzinfo
 from enum import Enum, auto
 from typing import Callable
+
+from PIL import Image
 
 from ..deck import renderer as renderer_mod
 from ..deck.renderer import KeyRenderer
@@ -52,6 +55,7 @@ class FrameKind(Enum):
     PICKER = auto()         # single-dimension swatch grid (brightness/color/temp/%)
     PRESETS = auto()        # preset-mode buttons (fan / thermostat)
     COVER_ACTIONS = auto()  # open / stop / close buttons
+    MEDIA = auto()          # media player: now playing + transport + volume
     CLIMATE_DETAIL = auto()  # thermostat temperature controls
     WEATHER = auto()
     HISTORY = auto()
@@ -92,6 +96,9 @@ class ActionKind(Enum):
     CLIMATE_STATUS = auto()  # target/current-temp display in the thermostat view
     CLIMATE_ADJUST = auto()  # +/- target-temperature button
     CLIMATE_POWER = auto()   # turn the thermostat on/off
+    MEDIA_ART = auto()       # one cell of the 3x3 album-art mosaic (non-interactive)
+    MEDIA_TEXT = auto()      # song / artist / album text tile (non-interactive)
+    MEDIA_VOLUME = auto()    # volume level readout (non-interactive)
     BACK = auto()
     PAGE = auto()
     BLANK = auto()
@@ -136,6 +143,7 @@ class Navigation:
         on_logbook: Callable[[str], list[dict]] | None = None,
         on_reload: Callable[[], None] | None = None,
         on_rotate: Callable[[], None] | None = None,
+        on_media_image: Callable[[str], bytes | None] | None = None,
         tz: tzinfo | None = None,
     ) -> None:
         self.display = display
@@ -147,7 +155,10 @@ class Navigation:
         self.on_logbook = on_logbook
         self.on_reload = on_reload
         self.on_rotate = on_rotate
+        self.on_media_image = on_media_image  # fn(entity_picture_url) -> raw image bytes
         self.tz = tz  # HA timezone for history clock labels (None = container local)
+        self._media_art: dict[str, Image.Image] = {}   # entity_picture url -> decoded art
+        self._art_inflight: set[str] = set()           # urls currently being fetched
         # When floors exist, the home screen lists floor folders (+ unassigned
         # rooms); otherwise it lists rooms directly.
         self.floors = floors or []
@@ -227,7 +238,22 @@ class Navigation:
         if action.kind is ActionKind.RESERVED_BLANK:
             return self.renderer.reserved_blank()
         if action.kind is ActionKind.ENTITY:
+            if action.entity.is_media_player:
+                return self.renderer.media_device(action.entity, self._media_art_for(action.entity))
             return self.renderer.device(action.entity)
+        if action.kind is ActionKind.MEDIA_ART:
+            cell = tuple((action.data or {}).get("cell", (1, 1)))
+            return self.renderer.media_art_tile(action.entity, self._media_art_for(action.entity), cell)
+        if action.kind is ActionKind.MEDIA_TEXT:
+            field = (action.data or {}).get("field")
+            caption, value = {
+                "title": ("Song", action.entity.media_title),
+                "artist": ("Artist", action.entity.media_artist),
+                "album": ("Album", action.entity.media_album),
+            }[field]
+            return self.renderer.media_meta(caption, value)
+        if action.kind is ActionKind.MEDIA_VOLUME:
+            return self.renderer.media_volume(action.entity)
         if action.kind is ActionKind.MENU_ITEM:
             d = action.data or {}
             if d.get("target") == "toggle":  # the Toggle tile reflects the live status
@@ -272,6 +298,43 @@ class Navigation:
             return self.renderer.brightness_cell(tuple(r["base"]), r["pct"])
         return self.renderer.percent_cell(r["pct"])
 
+    def _media_art_for(self, entity: DeviceEntity) -> Image.Image | None:
+        """Cached album art for ``entity``; fetches it in the background on a miss.
+
+        Never blocks the render: on a cache miss it kicks off a fetch thread and
+        returns None (the tile shows the fallback icon), then re-renders once the
+        artwork arrives.
+        """
+        url = entity.entity_picture
+        if not url or self.on_media_image is None:
+            return None
+        with self._lock:
+            cached = self._media_art.get(url)
+            if cached is not None:
+                return cached
+            if url in self._art_inflight:
+                return None
+            self._art_inflight.add(url)
+        threading.Thread(target=self._fetch_art, args=(url,), name="media-art", daemon=True).start()
+        return None
+
+    def _fetch_art(self, url: str) -> None:
+        image: Image.Image | None = None
+        try:
+            data = self.on_media_image(url)
+            if data:
+                img = Image.open(io.BytesIO(data)).convert("RGB")
+                img.load()
+                image = img
+        except Exception as exc:  # noqa: BLE001 - artwork is best-effort
+            logger.info("Album art fetch/decode failed: %s", exc)
+        with self._lock:
+            self._art_inflight.discard(url)
+            if image is not None:
+                self._media_art[url] = image
+        if image is not None:
+            self.render()  # redraw so the artwork appears
+
     def _build_key_map(self) -> dict[int, Action]:
         frame = self.stack[-1]
         if frame.kind is FrameKind.ROOM:
@@ -288,6 +351,8 @@ class Navigation:
             return self._presets_key_map(frame)
         if frame.kind is FrameKind.COVER_ACTIONS:
             return self._cover_actions_key_map(frame)
+        if frame.kind is FrameKind.MEDIA:
+            return self._media_key_map(frame)
         if frame.kind is FrameKind.CLIMATE_DETAIL:
             return self._climate_detail_key_map(frame)
         if frame.kind is FrameKind.WEATHER:
@@ -388,6 +453,7 @@ class Navigation:
                 opts.append(item("cover", "Controls", "arrow-up-down"))
                 if entity.supports_cover_position:
                     opts.append(item("position", "Position", "arrow-expand-vertical"))
+            # media players skip the menu: a long press opens their controls directly.
         opts.append(item("history", "History", "history"))
         return opts
 
@@ -453,6 +519,71 @@ class Navigation:
                 "icon": renderer_mod.PRESET_ICONS.get(name.lower(), "tune"),
                 "color": renderer_mod.CLIMATE_ACCENT, "active": name == active, "close": False,
             })
+        return result
+
+    def _media_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Now Playing: the album art as a 3x3 mosaic, with the transport buttons
+        grouped on one line and the volume settings grouped on another."""
+        entity = frame.entity
+        key_count = self.display.key_count
+        cols = getattr(self.display, "cols", 0) or key_count
+        rows = key_count // cols if cols else 1
+
+        def sbtn(call, label, icon, color=renderer_mod.NAV_COLOR):
+            return Action(ActionKind.SERVICE_BUTTON, entity=entity, data={
+                "call": call, "label": label, "icon": icon, "color": color, "active": False, "close": False})
+
+        transport: list[Action] = []
+        volume: list[Action] = []
+        if entity is not None:
+            if entity.supports_media_previous:
+                transport.append(sbtn(entity.media_service_call("media_previous_track"), "Prev", "skip-previous"))
+            # Play/pause button matches state: shows Pause while playing, Play otherwise.
+            pp_icon, pp_label = ("pause", "Pause") if entity.is_playing else ("play", "Play")
+            transport.append(sbtn(entity.media_service_call("media_play_pause"), pp_label, pp_icon, renderer_mod.ACCENT))
+            if entity.supports_media_next:
+                transport.append(sbtn(entity.media_service_call("media_next_track"), "Next", "skip-next"))
+            if entity.supports_media_stop:
+                transport.append(sbtn(entity.media_service_call("media_stop"), "Stop", "stop", renderer_mod.UNAVAILABLE))
+            if entity.supports_volume:
+                volume.append(sbtn(entity.media_service_call("volume_down"), "Vol −", "volume-minus"))
+            if entity.supports_volume_mute:
+                volume.append(sbtn(entity.volume_mute_call(not entity.is_muted),
+                                   "Unmute" if entity.is_muted else "Mute",
+                                   "volume-off" if entity.is_muted else "volume-mute"))
+            if entity.supports_volume:
+                volume.append(sbtn(entity.media_service_call("volume_up"), "Vol +", "volume-plus"))
+            if volume:
+                volume.append(Action(ActionKind.MEDIA_VOLUME, entity=entity))
+
+        history = Action(ActionKind.MENU_ITEM, entity=entity,
+                         data={"target": "history", "label": "History", "icon": "history"})
+
+        if entity is None or cols < 3 or rows < 3:  # too small for the mosaic: flat fallback
+            result = {0: Action(ActionKind.BACK)}
+            for i, action in enumerate([Action(ActionKind.MEDIA_ART, entity=entity, data={"cell": [1, 1]})]
+                                       + transport + volume + [history]):
+                if 1 + i < key_count:
+                    result[1 + i] = action
+            return result
+
+        result: dict[int, Action] = {}
+        for r in range(3):  # the artwork fills a 3x3 block in the top-left
+            for c in range(3):
+                result[r * cols + c] = Action(ActionKind.MEDIA_ART, entity=entity, data={"cell": [r, c]})
+        for c, field in enumerate(("title", "artist", "album")):  # song / artist / album below it
+            result[3 * cols + c] = Action(ActionKind.MEDIA_TEXT, entity=entity, data={"field": field})
+        result[3] = Action(ActionKind.BACK)   # nav column, beside the artwork
+        result[cols + 3] = history
+        # Transport on one line, volume on the next: below the metadata (portrait) or to the right.
+        if rows >= 6:
+            transport_start, volume_start = 4 * cols, 5 * cols
+        else:
+            transport_start, volume_start = 4, cols + 4
+        for line, start in ((transport, transport_start), (volume, volume_start)):
+            for i, action in enumerate(line):
+                if start + i < key_count:
+                    result[start + i] = action
         return result
 
     def _cover_actions_key_map(self, frame: Frame) -> dict[int, Action]:
@@ -693,8 +824,9 @@ class Navigation:
         with self._lock:
             if self._disconnected or key not in self._press_start:
                 return  # released (or disconnected) before the threshold
-            options = self._entity_menu_options(entity)
-            if self._menu_is_history_only(options):
+            if entity.is_media_player:
+                img = self.renderer.hold_feedback("play-box", "Release for controls")
+            elif self._menu_is_history_only(self._entity_menu_options(entity)):
                 img = self.renderer.hold_feedback("history", "Release for history")
             else:
                 img = self.renderer.hold_feedback("gesture-tap-hold", "Release for options")
@@ -724,8 +856,9 @@ class Navigation:
         elif action.kind in (ActionKind.WEATHER_DAY, ActionKind.WEATHER_CELL,
                              ActionKind.HISTORY_TITLE, ActionKind.HISTORY_EVENT,
                              ActionKind.TIMER_STATUS, ActionKind.CLIMATE_TEMP,
-                             ActionKind.CLIMATE_STATUS):
-            return  # forecast/history/status/temperature tiles are not interactive
+                             ActionKind.CLIMATE_STATUS, ActionKind.MEDIA_ART,
+                             ActionKind.MEDIA_TEXT, ActionKind.MEDIA_VOLUME):
+            return  # forecast/history/status/media-info tiles are not interactive
         elif action.kind is ActionKind.MENU_ITEM:
             self._dispatch_menu_target(action.entity, (action.data or {}).get("target"))
         elif action.kind is ActionKind.PICKER_CELL:
@@ -807,7 +940,11 @@ class Navigation:
 
     def _open_entity_menu(self, entity: DeviceEntity) -> None:
         """Open the long-press options menu — or, when the only options are
-        Toggle/History, go straight to the history view (single press toggles)."""
+        Toggle/History, go straight to the history view (single press toggles).
+        A media player opens its controls (Now Playing) directly."""
+        if entity.is_media_player:
+            self._push(Frame(FrameKind.MEDIA, entity=entity))
+            return
         options = self._entity_menu_options(entity)
         if self._menu_is_history_only(options):
             self._open_history(entity)
@@ -968,8 +1105,8 @@ class Navigation:
             # Detail views that reflect live state rebuild when their entity
             # changes (timer remaining, target temp, active preset, toggle state).
             viewing_detail = (
-                frame.kind in (FrameKind.TIMER, FrameKind.CLIMATE_DETAIL,
-                               FrameKind.PRESETS, FrameKind.ENTITY_MENU)
+                frame.kind in (FrameKind.TIMER, FrameKind.CLIMATE_DETAIL, FrameKind.PRESETS,
+                               FrameKind.ENTITY_MENU, FrameKind.MEDIA)
                 and frame.entity is not None
                 and frame.entity.entity_id == entity_id
             )
@@ -988,11 +1125,8 @@ class Navigation:
             for key, action in self.key_map.items():
                 if action.entity is None or action.entity.entity_id != entity_id:
                     continue
-                if action.kind is ActionKind.ENTITY:
-                    self.display.set_image(key, self.renderer.device(action.entity))
-                    return
-                if action.kind is ActionKind.CLIMATE_TEMP:
-                    self.display.set_image(key, self.renderer.climate_room_reading(action.entity, action.room))
+                if action.kind in (ActionKind.ENTITY, ActionKind.CLIMATE_TEMP):
+                    self.display.set_image(key, self._image_for(action))
                     return
 
     def tick(self) -> None:

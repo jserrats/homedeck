@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Callable, TypeVar
 
@@ -163,6 +164,33 @@ class HaClient:
             logger.info("Logbook unavailable for %s (%s)", entity_id, exc)
             return []
         return result if isinstance(result, list) else []
+
+    def get_media_image(self, entity_picture: str) -> bytes | None:
+        """Fetch media artwork bytes for a media_player's ``entity_picture``.
+
+        ``entity_picture`` is usually a signed, relative HA proxy URL; it's
+        resolved against the HTTP origin derived from the websocket URL. Returns
+        None on any error (artwork is best-effort).
+        """
+        if not entity_picture:
+            return None
+        url = entity_picture
+        if url.startswith("/"):
+            base = self._url
+            for ws, http in (("wss://", "https://"), ("ws://", "http://")):
+                if base.startswith(ws):
+                    base = http + base[len(ws):]
+                    break
+            if base.endswith("/api/websocket"):
+                base = base[: -len("/api/websocket")]
+            url = base + entity_picture
+        try:
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self._token}"})
+            with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310 - HA origin
+                return resp.read()
+        except Exception as exc:  # noqa: BLE001 - artwork is best-effort
+            logger.info("Media image fetch failed (%s)", exc)
+            return None
 
     def call_service(self, domain: str, service: str, entity_id: str, data: dict | None = None) -> None:
         self._execute(

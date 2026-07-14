@@ -5,7 +5,7 @@ Control [Home Assistant](https://www.home-assistant.io/) from an **Elgato Stream
 Each Home Assistant **Area** becomes a folder on the deck. Open a room and its keys are
 auto-populated with that area's devices. A **single press** does the obvious thing (toggle a
 light/switch/fan/cover, lock/unlock a lock, fire a button, pause/resume a timer, turn a
-thermostat on/off), and a **long press** (hold ≈0.5 s) opens an **options menu** for that
+thermostat on/off, play/pause a media player), and a **long press** (hold ≈0.5 s) opens an **options menu** for that
 entity — a tile per capability, tailored to what the entity supports. Hold and the key shows a
 blue **"Release for options"** hint so you know the long-press is armed; release to open the
 menu. Toggleable devices (lights, switches, input booleans, fans, covers) get a **Toggle** tile
@@ -29,6 +29,13 @@ menu and opens it directly.
   jammed.
 - **Timers** — the key shows the remaining time; the menu's **Controls** option opens a detail
   view with the remaining time and **Pause/Resume, Cancel and Finish** buttons.
+- **Media players** — a single press **play/pauses**. The key's icon is the **album art of what's
+  playing** (fetched from Home Assistant, with a play/pause badge and the title); it falls back to
+  the entity's Home Assistant icon (by `device_class`) when there's no artwork. A **long press**
+  opens the controls directly: the **artwork enlarged across a 3×3 mosaic**, with the **transport
+  buttons on one line** (previous / play-pause / next / stop) and the **volume settings on another**
+  (down / mute / up, plus the current level) — each trimmed to what the player supports — and a
+  History tile.
 - **Buttons** (`button` / `input_button`) — a single press fires the button (`.press`). They're
   stateless, and rendered as a black icon with a white outline to look like a pressable key.
 - **History** (any entity) — opens a fullscreen timeline of recent state changes from the HA

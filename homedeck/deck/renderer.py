@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from . import icons
 from ..color import hs_to_rgb, kelvin_to_rgb, scale
@@ -198,6 +198,80 @@ class KeyRenderer:
         value_font = self._fit_value_font(value, max_size=int(self.h * 0.24), max_width=self.w - 8)
         draw.text((self.w / 2, self.h * 0.52), value, font=value_font, fill=TEXT, anchor="mm")
         self._draw_label(draw, room.name, y=int(self.h * 0.74), size=11, color=NAV_COLOR, max_lines=1)
+        return img
+
+    def _media_state_glyph(self, entity: DeviceEntity) -> str | None:
+        """Play/pause badge matching state: 'pause' while playing, 'play' when
+        paused (i.e. the action a press performs); no badge when idle/off."""
+        if entity.is_playing:
+            return "pause"
+        if (entity.state or "").lower() == "paused":
+            return "play"
+        return None
+
+    def media_device(self, entity: DeviceEntity, art: Image.Image | None = None) -> Image.Image:
+        """A media player's room tile. With artwork it's the miniature (cover-fit)
+        with the title on a dark strip and a play/pause badge; otherwise a normal
+        status-colored icon + name."""
+        if art is not None:
+            img = ImageOps.fit(art.convert("RGB"), (self.w, self.h))
+            draw = ImageDraw.Draw(img)
+            strip = int(self.h * 0.30)
+            draw.rectangle([0, self.h - strip, self.w, self.h], fill=(0, 0, 0))
+            self._draw_label(draw, entity.media_title or entity.name, y=self.h - strip + 2,
+                             size=11, color=TEXT, max_lines=1)
+            glyph = self._media_state_glyph(entity)
+            if glyph:
+                draw.text((3, 1), icons.glyph(glyph), font=self._icon_font(int(self.h * 0.26)),
+                          fill=(255, 255, 255), anchor="lt")
+            return img
+        img, draw = self._canvas()
+        icon_name = icons.resolve_icon_name(entity.domain, entity.device_class, entity.explicit_icon,
+                                            state=entity.state)
+        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.46), cy=int(self.h * 0.38),
+                         color=self._icon_color_for(entity))
+        self._draw_label(draw, entity.name, y=int(self.h * 0.66), size=13)
+        return img
+
+    def media_art_tile(self, entity: DeviceEntity, art: Image.Image | None, cell: tuple[int, int]) -> Image.Image:
+        """One cell ``(row, col)`` of the 3x3 album-art mosaic.
+
+        With artwork the full image is cover-fit to a 3x3 canvas and this cell's
+        crop returned, so the nine tiles reassemble into one picture. With no
+        artwork the center cell shows the player's icon + name; the rest are blank.
+        """
+        r, c = cell
+        if art is not None:
+            mosaic = ImageOps.fit(art.convert("RGB"), (self.w * 3, self.h * 3))
+            return mosaic.crop((c * self.w, r * self.h, (c + 1) * self.w, (r + 1) * self.h))
+        img, draw = self._canvas()
+        if (r, c) == (1, 1):
+            icon_name = icons.resolve_icon_name(entity.domain, entity.device_class, entity.explicit_icon,
+                                                state=entity.state)
+            self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.5), cy=int(self.h * 0.40),
+                             color=self._icon_color_for(entity))
+            self._draw_label(draw, entity.name, y=int(self.h * 0.72), size=11, max_lines=1)
+        return img
+
+    def media_meta(self, caption: str, value: str | None) -> Image.Image:
+        """A metadata tile shown below the artwork: a small caption over the
+        (wrapped) song title / artist / album."""
+        img, draw = self._canvas()
+        self._draw_label(draw, caption, y=int(self.h * 0.06), size=10, color=NAV_COLOR, max_lines=1)
+        self._draw_label(draw, value or "—", y=int(self.h * 0.30), size=12, color=TEXT, max_lines=3)
+        return img
+
+    def media_volume(self, entity: DeviceEntity) -> Image.Image:
+        """A volume readout tile: level percent (or 'Muted') under a speaker icon."""
+        img, draw = self._canvas()
+        muted = entity.is_muted
+        icon = "volume-off" if muted else "volume-high"
+        self._draw_glyph(draw, icons.glyph(icon), size=int(self.h * 0.30), cy=int(self.h * 0.26),
+                         color=UNAVAILABLE if muted else CLIMATE_ICON)
+        pct = entity.volume_pct
+        text = "Muted" if muted else (f"{pct}%" if pct is not None else "—")
+        draw.text((self.w / 2, self.h * 0.58), text, font=self._value_font(int(self.h * 0.24)), fill=TEXT, anchor="mm")
+        self._draw_label(draw, "Volume", y=int(self.h * 0.78), size=10, color=NAV_COLOR, max_lines=1)
         return img
 
     def reserved_blank(self) -> Image.Image:

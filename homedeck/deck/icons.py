@@ -40,6 +40,7 @@ DOMAIN_ICONS: dict[str, str] = {
     "button": "gesture-tap-button",
     "input_button": "gesture-tap-button",
     "timer": "timer-outline",
+    "media_player": "cast",
 }
 
 # More specific defaults keyed by (domain, device_class).
@@ -72,6 +73,10 @@ DEVICE_CLASS_ICONS: dict[tuple[str, str], str] = {
     ("cover", "shade"): "roller-shade",
     ("cover", "curtain"): "curtains",
     ("cover", "blind"): "blinds",
+    # Match Home Assistant's media_player icons by device class.
+    ("media_player", "tv"): "television",
+    ("media_player", "speaker"): "speaker",
+    ("media_player", "receiver"): "audio-video",
 }
 
 

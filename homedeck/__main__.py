@@ -145,7 +145,7 @@ def run_deck(config: Config) -> int:
         floors=floors, unassigned_rooms=unassigned,
         weather=weather, on_forecast=client.get_forecast,
         on_logbook=client.get_logbook, on_reload=reload_model,
-        on_rotate=deck.cycle_rotation,
+        on_rotate=deck.cycle_rotation, on_media_image=client.get_media_image,
         tz=_resolve_timezone(client, config.timezone),
     )
 

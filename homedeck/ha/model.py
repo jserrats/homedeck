@@ -40,10 +40,23 @@ OFF_INDICATOR_DOMAINS = frozenset({"light", "switch", "fan", "input_boolean"})
 # Climate-related domains whose icon reads sky-blue (not the amber "on") when active.
 CLIMATE_DOMAINS = frozenset({"fan", "climate"})
 
+MEDIA_PLAYER_DOMAIN = "media_player"
+
+# media_player supported_features bits (MediaPlayerEntityFeature) we act on.
+MEDIA_PAUSE = 1
+MEDIA_VOLUME_SET = 4
+MEDIA_VOLUME_MUTE = 8
+MEDIA_PREVIOUS_TRACK = 16
+MEDIA_NEXT_TRACK = 32
+MEDIA_VOLUME_STEP = 1024
+MEDIA_STOP = 4096
+
 # Domains whose long-press opens a state-history / logbook view.
 HISTORY_DOMAINS = frozenset({"switch", "binary_sensor"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
-CONTROLLABLE_DOMAINS = TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS | {TIMER_DOMAIN} | {"climate"}
+CONTROLLABLE_DOMAINS = (
+    TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS | {TIMER_DOMAIN} | {"climate", MEDIA_PLAYER_DOMAIN}
+)
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
 
 # Entity categories that HA tucks away (not shown as primary controls in the UI).
@@ -220,6 +233,14 @@ class DeviceEntity:
             if state == "locked":
                 return Status.SECURE
             return Status.OFF
+        if self.domain == MEDIA_PLAYER_DOMAIN:
+            if state in UNAVAILABLE_STATES:
+                return Status.UNAVAILABLE
+            if state == "playing":
+                return Status.ON
+            if state in ("paused", "buffering"):
+                return Status.PENDING
+            return Status.OFF  # idle / off / standby / on
         if self.domain == "cover":
             # All covers: closed = green, open = orange, moving = pending.
             if state in UNAVAILABLE_STATES:
@@ -292,6 +313,8 @@ class DeviceEntity:
             return (TIMER_DOMAIN, service, self.entity_id, {})
         if self.domain == "climate":
             return self.climate_power_call()
+        if self.domain == MEDIA_PLAYER_DOMAIN:
+            return (MEDIA_PLAYER_DOMAIN, "media_play_pause", self.entity_id, {})
         return None
 
     @property
@@ -380,6 +403,84 @@ class DeviceEntity:
 
     def climate_set_preset_call(self, preset: str) -> tuple[str, str, str, dict]:
         return ("climate", "set_preset_mode", self.entity_id, {"preset_mode": preset})
+
+    # -- media player -------------------------------------------------------
+
+    @property
+    def is_media_player(self) -> bool:
+        return self.domain == MEDIA_PLAYER_DOMAIN
+
+    @property
+    def is_playing(self) -> bool:
+        return self.is_media_player and (self.state or "").lower() in ("playing", "buffering")
+
+    @property
+    def media_title(self) -> str | None:
+        title = self.attributes.get("media_title")
+        return str(title) if title else None
+
+    @property
+    def media_subtitle(self) -> str | None:
+        """Secondary line: artist, else series/album, else the app/source name."""
+        attrs = self.attributes
+        for key in ("media_artist", "media_series_title", "media_album_name", "app_name", "source"):
+            val = attrs.get(key)
+            if val:
+                return str(val)
+        return None
+
+    @property
+    def media_artist(self) -> str | None:
+        val = self.attributes.get("media_artist")
+        return str(val) if val else None
+
+    @property
+    def media_album(self) -> str | None:
+        val = self.attributes.get("media_album_name")
+        return str(val) if val else None
+
+    @property
+    def entity_picture(self) -> str | None:
+        """Relative URL of the current media artwork, if any."""
+        pic = self.attributes.get("entity_picture")
+        return str(pic) if pic else None
+
+    @property
+    def volume_pct(self) -> int | None:
+        try:
+            return round(float(self.attributes.get("volume_level")) * 100)
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def is_muted(self) -> bool:
+        return bool(self.attributes.get("is_volume_muted"))
+
+    @property
+    def supports_media_previous(self) -> bool:
+        return self.is_media_player and bool(self._features() & MEDIA_PREVIOUS_TRACK)
+
+    @property
+    def supports_media_next(self) -> bool:
+        return self.is_media_player and bool(self._features() & MEDIA_NEXT_TRACK)
+
+    @property
+    def supports_media_stop(self) -> bool:
+        return self.is_media_player and bool(self._features() & MEDIA_STOP)
+
+    @property
+    def supports_volume(self) -> bool:
+        return self.is_media_player and bool(self._features() & (MEDIA_VOLUME_SET | MEDIA_VOLUME_STEP))
+
+    @property
+    def supports_volume_mute(self) -> bool:
+        return self.is_media_player and bool(self._features() & MEDIA_VOLUME_MUTE)
+
+    def media_service_call(self, service: str, data: dict | None = None) -> tuple[str, str, str, dict]:
+        return (MEDIA_PLAYER_DOMAIN, service, self.entity_id, data or {})
+
+    def volume_mute_call(self, mute: bool) -> tuple[str, str, str, dict]:
+        return self.media_service_call("volume_mute", {"is_volume_muted": mute})
 
     @property
     def supports_dynamic_color(self) -> bool:

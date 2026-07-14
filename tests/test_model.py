@@ -76,7 +76,7 @@ def _registries():
         # skipped: hidden / disabled / out of scope / no area / diagnostic / config
         {"entity_id": "light.hidden", "area_id": "living", "hidden_by": "user"},
         {"entity_id": "light.disabled", "area_id": "living", "disabled_by": "user"},
-        {"entity_id": "media_player.tv", "area_id": "living"},
+        {"entity_id": "camera.front", "area_id": "living"},
         {"entity_id": "light.orphan", "area_id": None, "device_id": None},
         {"entity_id": "sensor.rssi", "area_id": "living", "entity_category": "diagnostic"},
         {"entity_id": "switch.config", "area_id": "living", "entity_category": "config"},

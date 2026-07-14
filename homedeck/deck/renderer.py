@@ -122,20 +122,24 @@ class KeyRenderer:
 
     # -- key types ----------------------------------------------------------
 
+    def _icon_color_for(self, entity: DeviceEntity) -> tuple[int, int, int]:
+        """Status-reflecting icon tint: dim grey (unavailable), purple (presence),
+        sky blue (active fan/climate), a light's own color, else the status palette."""
+        if entity.status is Status.UNAVAILABLE:
+            return UNAVAILABLE_ICON
+        if entity.is_presence and entity.status is Status.ON:
+            return DOT_PRESENCE  # presence detected -> purple (matches the room dot)
+        if entity.domain in CLIMATE_DOMAINS and entity.status is Status.ON:
+            return CLIMATE_ICON  # active fan / climate -> sky blue
+        return entity.icon_color() or STATUS_COLORS[entity.status]
+
     def device(self, entity: DeviceEntity) -> Image.Image:
         img, draw = self._canvas()
         unavailable = entity.status is Status.UNAVAILABLE
         # Unavailable devices keep a readable dim icon and get a warning badge
         # instead of being painted red. A color/temp/dimmable light that is on
         # tints its icon with its actual color; otherwise the status palette.
-        if unavailable:
-            color = UNAVAILABLE_ICON
-        elif entity.is_presence and entity.status is Status.ON:
-            color = DOT_PRESENCE  # presence detected -> purple (matches the room dot)
-        elif entity.domain in CLIMATE_DOMAINS and entity.status is Status.ON:
-            color = CLIMATE_ICON  # active fan / climate -> sky blue
-        else:
-            color = entity.icon_color() or STATUS_COLORS[entity.status]
+        color = self._icon_color_for(entity)
         icon_name = icons.resolve_icon_name(
             entity.domain, entity.device_class, entity.explicit_icon,
             state=entity.state, is_open=entity.closure_open(),
@@ -337,16 +341,46 @@ class KeyRenderer:
         on = entity.climate_is_on
         return self.action_button("power", "Turn Off" if on else "Turn On", UNAVAILABLE if on else SECURE)
 
-    def climate_preset(self, name: str, active: bool = False) -> Image.Image:
-        """A Home Assistant preset-mode button; the active preset is highlighted."""
+    def option_button(self, icon_name: str, label: str, color: tuple[int, int, int] = NAV_COLOR,
+                      active: bool = False) -> Image.Image:
+        """A labelled icon tile used for menu items, presets and cover controls.
+
+        ``active`` draws an accent border in ``color`` (e.g. the current preset).
+        """
         img, draw = self._canvas()
-        icon_name = PRESET_ICONS.get((name or "").lower(), "tune")
-        color = CLIMATE_ACCENT if active else NAV_COLOR
         if active:
-            draw.rectangle([1, 1, self.w - 2, self.h - 2], outline=CLIMATE_ACCENT, width=max(2, int(self.h * 0.03)))
+            draw.rectangle([1, 1, self.w - 2, self.h - 2], outline=color, width=max(2, int(self.h * 0.03)))
         self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.40), cy=int(self.h * 0.36), color=color)
-        self._draw_label(draw, (name or "").replace("_", " ").title(), y=int(self.h * 0.66), size=12)
+        self._draw_label(draw, label, y=int(self.h * 0.66), size=12)
         return img
+
+    _TOGGLE_LABELS = {
+        Status.ON: "On", Status.OFF: "Off", Status.OPEN: "Open",
+        Status.SECURE: "Closed", Status.PENDING: "…", Status.UNAVAILABLE: "N/A",
+    }
+
+    def toggle_button(self, entity: DeviceEntity) -> Image.Image:
+        """The menu's Toggle tile: the device icon in its status color (with the
+        off-bar / warning badge like a normal tile) and its current state word."""
+        img, draw = self._canvas()
+        icon_name = icons.resolve_icon_name(entity.domain, entity.device_class, entity.explicit_icon,
+                                            state=entity.state, is_open=entity.closure_open())
+        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.42), cy=int(self.h * 0.36),
+                         color=self._icon_color_for(entity))
+        self._draw_label(draw, self._TOGGLE_LABELS.get(entity.status, ""), y=int(self.h * 0.66), size=13)
+        if entity.status is Status.UNAVAILABLE:
+            self._draw_warning_badge(draw)
+        elif entity.is_off:
+            self._draw_off_bar(draw)
+        return img
+
+    def brightness_cell(self, base: tuple[int, int, int], brightness_pct: int) -> Image.Image:
+        """A swatch previewing a brightness level at the light's current color."""
+        return self._swatch(base, brightness_pct, None)
+
+    def percent_cell(self, pct: int) -> Image.Image:
+        """A swatch previewing a percentage level (fan speed / cover position)."""
+        return self._swatch(WEATHER_ACCENT, pct, None)
 
     def nav(self, kind: str) -> Image.Image:
         """kind: 'back' | 'prev' | 'next'."""
@@ -372,13 +406,20 @@ class KeyRenderer:
             draw.text((self.w / 2, self.h * 0.72), sublabel, font=self._label_font(11), fill=fg, anchor="mm")
         return img
 
-    def light_cell(self, kelvin: int, brightness_pct: int) -> Image.Image:
-        """A swatch previewing a (color temperature, brightness) preset."""
-        return self._swatch(kelvin_to_rgb(kelvin), brightness_pct, f"{kelvin}K")
+    def temp_cell(self, kelvin: int) -> Image.Image:
+        """A color-temperature swatch: the kelvin value on its kelvin-colored bg."""
+        bg = kelvin_to_rgb(kelvin)
+        img = Image.new("RGB", (self.w, self.h), bg)
+        draw = ImageDraw.Draw(img)
+        # Dark text on light swatches, light text on dark ones.
+        luma = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2]
+        fg = (20, 20, 20) if luma > 140 else (245, 245, 245)
+        draw.text((self.w / 2, self.h / 2), f"{kelvin}K", font=self._value_font(int(self.h * 0.22)), fill=fg, anchor="mm")
+        return img
 
-    def color_cell(self, hue: float, saturation: float, brightness_pct: int) -> Image.Image:
-        """A swatch previewing an (RGB color, brightness) preset."""
-        return self._swatch(hs_to_rgb(hue, saturation), brightness_pct, None)
+    def color_swatch(self, hue: float, saturation: float = 100) -> Image.Image:
+        """A plain color swatch (its hue is the label); used by the color picker."""
+        return Image.new("RGB", (self.w, self.h), hs_to_rgb(hue, saturation))
 
     def hold_feedback(self, icon_name: str = "door-open", label: str = "Release to open") -> Image.Image:
         """Shown while a long-press is armed (held past the threshold).

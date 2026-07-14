@@ -23,12 +23,12 @@ def test_button_is_controllable_and_presses():
     assert ib.service_call() == ("input_button", "press", "input_button.reset", {})
 
 
-def test_button_not_toggle_or_display_or_off_or_longpress():
+def test_button_not_toggle_or_display_or_off():
     b = _button()
     assert b.display_value() is None
     assert b.is_off is False            # no "off" bar for a stateless button
-    assert b.has_long_press is False    # simple press, fires immediately
-    assert b.long_press_call() is None
+    assert b.long_press_call() is None  # no lock-style direct long action
+    assert b.has_long_press is True     # long press opens the options menu (History)
 
 
 def test_button_status_actionable_unless_unavailable():

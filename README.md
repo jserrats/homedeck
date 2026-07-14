@@ -3,27 +3,38 @@
 Control [Home Assistant](https://www.home-assistant.io/) from an **Elgato Stream Deck XL**.
 
 Each Home Assistant **Area** becomes a folder on the deck. Open a room and its keys are
-auto-populated with that area's devices:
+auto-populated with that area's devices. A **single press** does the obvious thing (toggle a
+light/switch/fan/cover, lock/unlock a lock, fire a button, pause/resume a timer, turn a
+thermostat on/off), and a **long press** (hold ≈0.5 s) opens an **options menu** for that
+entity — a tile per capability, tailored to what the entity supports. Hold and the key shows a
+blue **"Release for options"** hint so you know the long-press is armed; release to open the
+menu. Toggleable devices (lights, switches, input booleans, fans, covers) get a **Toggle** tile
+first — the same on/off action as a single press. Every entity's menu ends with **History**, and
+when History is the *only* option (plain read-only sensors, buttons…) the long press skips the
+menu and opens it directly.
 
-- **Lights, switches, fans, covers** — a single press toggles the device. For a dimmable
-  light, a **long press** opens a full-deck **4×8** preset picker (rows = brightness 100→10%);
-  the columns are **8 colors around the wheel** for RGB lights, or **color temperature across
-  the light's full range** for color-temp-only lights. Tap a swatch to apply it and close.
+- **Lights** — the menu offers **Brightness**, **Color** and **Warmth** (only those the light
+  supports). Each opens a full-deck picker: a brightness scale (10→100%) in the light's current
+  color, a **color wheel** of hues, or **color temperature across the light's full range**. Tap
+  a swatch to apply it and close.
+- **Fans** — a **Speed** option: **preset-mode** buttons (low/medium/high…) when the fan
+  exposes them, otherwise a **percentage** scale.
+- **Thermostats** (`climate`) — a **Temperature** option (status, **− / +** whole-degree
+  set-point buttons, and an on/off toggle) and a **Presets** option (one button per HA preset
+  mode — eco, comfort, away… — with the active one highlighted).
+- **Covers** — a **Controls** option (**Open / Stop / Close**) and, when the cover supports
+  positioning, a **Position** option (a 0→100% scale via `cover.set_cover_position`).
+- **Locks** — an **Open Door** option (`lock.open`). The padlock icon is **green** when locked,
+  **grey** when unlocked, a **yellow clock** while locking/unlocking, and a **red alert** when
+  jammed.
+- **Timers** — the key shows the remaining time; the menu's **Controls** option opens a detail
+  view with the remaining time and **Pause/Resume, Cancel and Finish** buttons.
 - **Buttons** (`button` / `input_button`) — a single press fires the button (`.press`). They're
   stateless, and rendered as a black icon with a white outline to look like a pressable key.
-- **Timers** — the key shows the remaining time. A single press pauses/resumes (or starts an
-  idle timer); a **long press** opens a detail view with the remaining time and
-  **Pause/Resume, Cancel and Finish** buttons.
-- **Thermostats** (`climate`) — the key shows the current temperature. A single press
-  **turns the thermostat on/off**; a **long press** opens a control view with the target
-  set-point, **− / +** buttons to adjust it **one whole degree at a time**, an on/off toggle,
-  and one button per **Home Assistant preset mode** (eco, comfort, away…) with the active
-  preset highlighted.
-- **Locks** — a single press locks/unlocks; a **long press** (hold ≈0.5 s) opens the door
-  (`lock.open`). Once you've held long enough, the key changes to a blue **"Release to open"**
-  tile so you know the long-press is armed before you let go. The padlock is **green** when
-  locked, **grey** when unlocked, a **yellow clock** while locking/unlocking (change in
-  progress), and a **red alert** when jammed.
+- **History** (any entity) — opens a fullscreen timeline of recent state changes from the HA
+  logbook, newest first, each showing the **clock time**, the new state, and **what triggered
+  it** (an automation, a user, or another entity). Times use Home Assistant's own timezone (read
+  from its config), falling back to the container `TZ`.
 - **Sensors & climate** — the current value is displayed. Within a room, the read-only
   sensors are grouped into a band at the **bottom rows**, separated from the controllable
   devices in the top rows.
@@ -32,10 +43,6 @@ auto-populated with that area's devices:
   while moving); door-like ones also switch between the closed and open icon.
 - **Presence / occupancy sensors** — the icon turns **purple** while detecting (grey when
   clear), matching the room's presence dot.
-- **History (switches & binary sensors)** — a **long press** opens a fullscreen timeline of
-  recent state changes from the HA logbook, newest first, each showing the **clock time**, the
-  new state, and **what triggered it** (an automation, a user, or another entity). Times use
-  Home Assistant's own timezone (read from its config), falling back to the container `TZ`.
 - **Fans & climate** — the icon reads **sky blue** when active (instead of the amber "on").
 - Each key shows the entity's **HA icon and name**, and the **icon color reflects state**:
   amber = on, grey = off. A light that supports **dimming, color temperature or color** tints

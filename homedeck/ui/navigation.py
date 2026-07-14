@@ -48,8 +48,11 @@ class FrameKind(Enum):
     ROOM = auto()
     SECURITY = auto()
     CLIMATE = auto()
-    CLIMATE_DETAIL = auto()
-    LIGHT_GRID = auto()
+    ENTITY_MENU = auto()    # long-press options menu for an entity
+    PICKER = auto()         # single-dimension swatch grid (brightness/color/temp/%)
+    PRESETS = auto()        # preset-mode buttons (fan / thermostat)
+    COVER_ACTIONS = auto()  # open / stop / close buttons
+    CLIMATE_DETAIL = auto()  # thermostat temperature controls
     WEATHER = auto()
     HISTORY = auto()
     TIMER = auto()
@@ -61,9 +64,10 @@ class Frame:
     kind: FrameKind
     room: Room | None = None
     page: int = 0
-    entity: DeviceEntity | None = None  # light being edited (LIGHT_GRID) / entity (HISTORY)
+    entity: DeviceEntity | None = None  # entity a menu/picker/detail view acts on
     forecast: list[ForecastDay] | None = None  # days shown in a WEATHER frame
     history: list[HistoryEvent] | None = None  # events shown in a HISTORY frame
+    data: dict | None = None  # PICKER: {"type": "brightness"|"color"|...}
 
 
 class ActionKind(Enum):
@@ -76,7 +80,9 @@ class ActionKind(Enum):
     SETTINGS_ITEM = auto()  # an action button inside the Settings folder
     FLOOR_HEADER = auto()  # non-interactive section label
     ENTITY = auto()
-    GRID_CELL = auto()     # a brightness/color-temp preset in the light grid
+    MENU_ITEM = auto()     # an option in the long-press entity menu
+    PICKER_CELL = auto()   # a swatch/level in a picker (applies + closes)
+    SERVICE_BUTTON = auto()  # a button that fires a service call (preset / cover)
     WEATHER_DAY = auto()   # non-interactive forecast tile (compact fallback)
     WEATHER_CELL = auto()  # one cell of the full-matrix forecast (day/icon/min/max)
     HISTORY_TITLE = auto() # header of the history view (entity name)
@@ -86,7 +92,6 @@ class ActionKind(Enum):
     CLIMATE_STATUS = auto()  # target/current-temp display in the thermostat view
     CLIMATE_ADJUST = auto()  # +/- target-temperature button
     CLIMATE_POWER = auto()   # turn the thermostat on/off
-    CLIMATE_PRESET = auto()  # apply an HA preset mode
     BACK = auto()
     PAGE = auto()
     BLANK = auto()
@@ -100,7 +105,7 @@ class Action:
     room: Room | None = None
     entity: DeviceEntity | None = None
     delta: int = 0
-    data: dict | None = None  # GRID_CELL: {"brightness_pct":.., "color_temp_kelvin":..}
+    data: dict | None = None  # PICKER_CELL: {"call":.., "render":..}; MENU_ITEM/SERVICE_BUTTON payloads
     day: ForecastDay | None = None  # WEATHER_DAY tile
     event: HistoryEvent | None = None  # HISTORY_EVENT tile
 
@@ -223,11 +228,17 @@ class Navigation:
             return self.renderer.reserved_blank()
         if action.kind is ActionKind.ENTITY:
             return self.renderer.device(action.entity)
-        if action.kind is ActionKind.GRID_CELL:
-            d = action.data
-            if "hs_color" in d:
-                return self.renderer.color_cell(d["hs_color"][0], d["hs_color"][1], d["brightness_pct"])
-            return self.renderer.light_cell(d["color_temp_kelvin"], d["brightness_pct"])
+        if action.kind is ActionKind.MENU_ITEM:
+            d = action.data or {}
+            if d.get("target") == "toggle":  # the Toggle tile reflects the live status
+                return self.renderer.toggle_button(action.entity)
+            return self.renderer.option_button(d["icon"], d["label"], renderer_mod.ROOM_ACCENT)
+        if action.kind is ActionKind.PICKER_CELL:
+            return self._render_picker_cell(action.data or {})
+        if action.kind is ActionKind.SERVICE_BUTTON:
+            d = action.data or {}
+            return self.renderer.option_button(d["icon"], d["label"], d.get("color", renderer_mod.NAV_COLOR),
+                                                active=d.get("active", False))
         if action.kind is ActionKind.HISTORY_TITLE:
             return self.renderer.history_title(action.entity)
         if action.kind is ActionKind.HISTORY_EVENT:
@@ -244,14 +255,22 @@ class Navigation:
             return self.renderer.action_button(d["icon"], d["label"], renderer_mod.CLIMATE_ACCENT)
         if action.kind is ActionKind.CLIMATE_POWER:
             return self.renderer.climate_power(action.entity)
-        if action.kind is ActionKind.CLIMATE_PRESET:
-            preset = (action.data or {}).get("preset")
-            return self.renderer.climate_preset(preset, active=action.entity.preset_mode == preset)
         if action.kind is ActionKind.BACK:
             return self.renderer.nav("back")
         if action.kind is ActionKind.PAGE:
             return self.renderer.nav("next" if action.delta > 0 else "prev")
         return self.renderer.blank()
+
+    def _render_picker_cell(self, data: dict):
+        r = data.get("render", {})
+        t = r.get("type")
+        if t == "temp":
+            return self.renderer.temp_cell(r["kelvin"])
+        if t == "color":
+            return self.renderer.color_swatch(r["hue"], r["sat"])
+        if t == "brightness":
+            return self.renderer.brightness_cell(tuple(r["base"]), r["pct"])
+        return self.renderer.percent_cell(r["pct"])
 
     def _build_key_map(self) -> dict[int, Action]:
         frame = self.stack[-1]
@@ -261,10 +280,16 @@ class Navigation:
             return self._security_key_map(frame)
         if frame.kind is FrameKind.CLIMATE:
             return self._climate_key_map(frame)
+        if frame.kind is FrameKind.ENTITY_MENU:
+            return self._entity_menu_key_map(frame)
+        if frame.kind is FrameKind.PICKER:
+            return self._picker_key_map(frame)
+        if frame.kind is FrameKind.PRESETS:
+            return self._presets_key_map(frame)
+        if frame.kind is FrameKind.COVER_ACTIONS:
+            return self._cover_actions_key_map(frame)
         if frame.kind is FrameKind.CLIMATE_DETAIL:
             return self._climate_detail_key_map(frame)
-        if frame.kind is FrameKind.LIGHT_GRID:
-            return self._light_grid_key_map(frame)
         if frame.kind is FrameKind.WEATHER:
             return self._weather_key_map(frame)
         if frame.kind is FrameKind.HISTORY:
@@ -311,10 +336,11 @@ class Navigation:
         }
 
     def _climate_detail_key_map(self, frame: Frame) -> dict[int, Action]:
-        """Thermostat detail: Back, a target/current-temp status, then −/+ set-point,
-        an on/off toggle, and one button per Home Assistant preset mode."""
+        """Thermostat temperature controls: Back, a target/current-temp status,
+        −/+ whole-degree set-point buttons, and an on/off toggle. (Presets have
+        their own view, reached from the entity menu.)"""
         entity = frame.entity
-        result: dict[int, Action] = {
+        return {
             0: Action(ActionKind.BACK),
             1: Action(ActionKind.CLIMATE_STATUS, entity=entity),
             2: Action(ActionKind.CLIMATE_ADJUST, entity=entity, delta=-1,
@@ -323,15 +349,128 @@ class Navigation:
                       data={"label": "+1°", "icon": "thermometer-plus"}),
             4: Action(ActionKind.CLIMATE_POWER, entity=entity),
         }
-        # Presets start on the next row (or continue sequentially without grid info).
-        cols = getattr(self.display, "cols", 0)
-        start = cols if cols else 5
-        for i, preset in enumerate(entity.preset_modes if entity else []):
+
+    def _entity_menu_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Long-press options menu: Back, then one tile per capability."""
+        options = self._entity_menu_options(frame.entity)
+        return layout_page(options, self.display.key_count, {0: Action(ActionKind.BACK)}, frame.page)
+
+    def _entity_menu_options(self, entity: DeviceEntity | None) -> list[Action]:
+        """The capability tiles offered for ``entity`` (History is always last)."""
+        def item(target: str, label: str, icon: str) -> Action:
+            return Action(ActionKind.MENU_ITEM, entity=entity,
+                          data={"target": target, "label": label, "icon": icon})
+
+        opts: list[Action] = []
+        if entity is not None:
+            d = entity.domain
+            if entity.is_toggleable:
+                opts.append(item("toggle", "Toggle", "toggle-switch-variant"))
+            if d == "light":
+                if entity.supports_brightness:
+                    opts.append(item("brightness", "Brightness", "brightness-6"))
+                if entity.supports_rgb_color:
+                    opts.append(item("color", "Color", "palette"))
+                if entity.supports_color_temp:
+                    opts.append(item("temperature", "Warmth", "thermometer-lines"))
+            elif d == "fan":
+                if entity.supports_fan_speed:
+                    opts.append(item("fan_speed", "Speed", "fan-speed-1"))
+            elif entity.is_climate:
+                opts.append(item("climate_temp", "Temperature", "thermostat"))
+                if entity.preset_modes:
+                    opts.append(item("presets", "Presets", "tune"))
+            elif d == "lock":
+                opts.append(item("lock_open", "Open Door", "door-open"))
+            elif entity.is_timer:
+                opts.append(item("timer", "Controls", "timer-cog"))
+            elif d == "cover":
+                opts.append(item("cover", "Controls", "arrow-up-down"))
+                if entity.supports_cover_position:
+                    opts.append(item("position", "Position", "arrow-expand-vertical"))
+        opts.append(item("history", "History", "history"))
+        return opts
+
+    def _picker_key_map(self, frame: Frame) -> dict[int, Action]:
+        """A single-dimension picker (Back + swatches that apply and close)."""
+        result: dict[int, Action] = {0: Action(ActionKind.BACK)}
+        cells = self._picker_cells(frame.entity, (frame.data or {}).get("type"))
+        for i, cell in enumerate(cells):
+            key = 1 + i
+            if key >= self.display.key_count:
+                break
+            result[key] = cell
+        return result
+
+    def _picker_cells(self, entity: DeviceEntity | None, ptype: str | None) -> list[Action]:
+        if entity is None:
+            return []
+        n = self.display.key_count - 1  # cells fill keys 1..
+        eid = entity.entity_id
+
+        def cell(call, render):
+            return Action(ActionKind.PICKER_CELL, entity=entity, data={"call": call, "render": render})
+
+        if ptype == "brightness":
+            base = entity.base_color() or renderer_mod.WARM_WHITE
+            return [cell(("light", "turn_on", eid, {"brightness_pct": b}),
+                         {"type": "brightness", "base": list(base), "pct": b})
+                    for b in _spread(10, 100, n)]
+        if ptype == "temperature":
+            lo, hi = entity.color_temp_range()
+            return [cell(("light", "turn_on", eid, {"color_temp_kelvin": k}),
+                         {"type": "temp", "kelvin": k})
+                    for k in _spread(lo, hi, n)]
+        if ptype == "color":
+            return [cell(("light", "turn_on", eid, {"hs_color": [h, 100]}),
+                         {"type": "color", "hue": h, "sat": 100})
+                    for h in _hues(n)]
+        if ptype == "fan_percentage":
+            return [cell(entity.fan_set_percentage_call(p), {"type": "percent", "pct": p})
+                    for p in _spread(10, 100, n)]
+        if ptype == "cover_position":
+            return [cell(entity.cover_set_position_call(p), {"type": "percent", "pct": p})
+                    for p in _spread(0, 100, n)]
+        return []
+
+    def _presets_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Preset-mode buttons for a fan or thermostat (thermostat also gets a
+        status tile). Tapping a preset applies it; the active one is highlighted."""
+        entity = frame.entity
+        result: dict[int, Action] = {0: Action(ActionKind.BACK)}
+        start = 1
+        if entity is not None and entity.is_climate:
+            result[1] = Action(ActionKind.CLIMATE_STATUS, entity=entity)
+            start = 2
+        active = entity.preset_mode if entity else None
+        for i, name in enumerate(entity.preset_modes if entity else []):
             key = start + i
             if key >= self.display.key_count:
                 break
-            result[key] = Action(ActionKind.CLIMATE_PRESET, entity=entity, data={"preset": preset})
+            result[key] = Action(ActionKind.SERVICE_BUTTON, entity=entity, data={
+                "call": (entity.domain, "set_preset_mode", entity.entity_id, {"preset_mode": name}),
+                "label": name.replace("_", " ").title(),
+                "icon": renderer_mod.PRESET_ICONS.get(name.lower(), "tune"),
+                "color": renderer_mod.CLIMATE_ACCENT, "active": name == active, "close": False,
+            })
         return result
+
+    def _cover_actions_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Cover controls: Back, then Open / Stop / Close buttons."""
+        entity = frame.entity
+        eid = entity.entity_id if entity else ""
+
+        def btn(service, label, icon, color):
+            return Action(ActionKind.SERVICE_BUTTON, entity=entity, data={
+                "call": ("cover", service, eid, {}), "label": label, "icon": icon,
+                "color": color, "active": False, "close": False})
+
+        return {
+            0: Action(ActionKind.BACK),
+            1: btn("open_cover", "Open", "arrow-up-bold", renderer_mod.ACCENT),
+            2: btn("stop_cover", "Stop", "stop", renderer_mod.UNAVAILABLE),
+            3: btn("close_cover", "Close", "arrow-down-bold", renderer_mod.NAV_COLOR),
+        }
 
     def _history_key_map(self, frame: Frame) -> dict[int, Action]:
         """History view: Back, an entity-name header, then newest-first events."""
@@ -436,35 +575,6 @@ class Navigation:
             return layout_page(flat, self.display.key_count, {0: Action(ActionKind.BACK)}, frame.page)
         return layout_security(groups, self.display.key_count, cols, frame.page)
 
-    def _light_grid_key_map(self, frame: Frame) -> dict[int, Action]:
-        """Full-deck picker: every key is a preset. Rows = brightness (top
-        brightest), columns = color temperature across the light's full range.
-        Tapping a cell applies it and closes the picker.
-        """
-        entity = frame.entity
-        cols = getattr(self.display, "cols", 0)
-        rows = self.display.key_count // cols if cols else 0
-        if entity is None or cols < 2 or rows < 2:
-            return {}
-
-        # RGB lights get a hue picker; color-temp-only lights get a kelvin picker.
-        rgb = entity.supports_rgb_color
-        if rgb:
-            brightness, hues = entity.color_grid_levels(rows, cols)
-        else:
-            brightness, kelvins = entity.light_grid_levels(rows, cols)
-        brightness_top_down = list(reversed(brightness))  # row 0 = brightest
-
-        result: dict[int, Action] = {}
-        for r in range(rows):
-            for c in range(cols):
-                if rgb:
-                    data = {"brightness_pct": brightness_top_down[r], "hs_color": [hues[c], 100]}
-                else:
-                    data = {"brightness_pct": brightness_top_down[r], "color_temp_kelvin": kelvins[c]}
-                result[r * cols + c] = Action(ActionKind.GRID_CELL, entity=entity, data=data)
-        return result
-
     def _collect_security_groups(self) -> list[list[DeviceEntity]]:
         """Locks, then closures, then presence sensors — each sorted, empties dropped."""
         locks, closures, presence = [], [], []
@@ -556,17 +666,11 @@ class Navigation:
             return
         if action.kind is ActionKind.ENTITY and action.entity is not None:
             entity = action.entity
-            long = entity.has_long_press and (time.monotonic() - start) >= LONG_PRESS_S
-            if long and self._grid_fits() and (entity.supports_rgb_color or entity.supports_light_grid):
-                self._open_light_grid(entity)  # opens the picker; view changes
-            elif long and entity.supports_history:
-                self._open_history(entity)  # opens the history view; view changes
-            elif long and entity.is_timer:
-                self._open_timer(entity)  # opens the timer detail view; view changes
-            elif long and entity.is_climate:
-                self._open_climate_detail(entity)  # opens the thermostat controls; view changes
+            long = (time.monotonic() - start) >= LONG_PRESS_S
+            if long:
+                self._open_entity_menu(entity)  # opens the options menu; view changes
             elif entity.is_controllable:
-                self._invoke(entity, long=long)
+                self._invoke(entity)
                 self._restore_key(key)  # clear any hold feedback
             else:
                 self._restore_key(key)  # non-controllable short press: nothing to do
@@ -581,20 +685,19 @@ class Navigation:
         timer.start()
 
     def _show_hold_feedback(self, key: int, entity: DeviceEntity) -> None:
-        """Fired by the timer: if the key is still held, show it is armed."""
+        """Fired by the timer: if the key is still held, show it is armed.
+
+        When the entity has a single option (History only) the hint names it;
+        otherwise it announces the options menu.
+        """
         with self._lock:
             if self._disconnected or key not in self._press_start:
                 return  # released (or disconnected) before the threshold
-            if entity.supports_rgb_color or entity.supports_light_grid:
-                img = self.renderer.hold_feedback("palette", "Release for presets")
-            elif entity.supports_history:
+            options = self._entity_menu_options(entity)
+            if self._menu_is_history_only(options):
                 img = self.renderer.hold_feedback("history", "Release for history")
-            elif entity.is_timer:
-                img = self.renderer.hold_feedback("timer-cog", "Release for timer")
-            elif entity.is_climate:
-                img = self.renderer.hold_feedback("thermostat", "Release for controls")
             else:
-                img = self.renderer.hold_feedback()  # lock: "Release to open"
+                img = self.renderer.hold_feedback("gesture-tap-hold", "Release for options")
             self.display.set_image(key, img)
 
     def _restore_key(self, key: int) -> None:
@@ -623,25 +726,24 @@ class Navigation:
                              ActionKind.TIMER_STATUS, ActionKind.CLIMATE_TEMP,
                              ActionKind.CLIMATE_STATUS):
             return  # forecast/history/status/temperature tiles are not interactive
+        elif action.kind is ActionKind.MENU_ITEM:
+            self._dispatch_menu_target(action.entity, (action.data or {}).get("target"))
+        elif action.kind is ActionKind.PICKER_CELL:
+            self._apply_picker_cell(action)
+        elif action.kind is ActionKind.SERVICE_BUTTON:
+            self._apply_service_button(action)
         elif action.kind is ActionKind.CLIMATE_ADJUST:
             self._adjust_climate_temp(action)
         elif action.kind is ActionKind.CLIMATE_POWER:
             self._send(action.entity.climate_power_call())
-        elif action.kind is ActionKind.CLIMATE_PRESET:
-            self._send(action.entity.climate_set_preset_call((action.data or {}).get("preset")))
         elif action.kind is ActionKind.FLOOR_HEADER:
             self._toggle_floor(action.floor)
         elif action.kind is ActionKind.BACK:
             self._pop()
         elif action.kind is ActionKind.PAGE:
             self._change_page(action.delta)
-        elif action.kind is ActionKind.GRID_CELL:
-            self._apply_light_cell(action)
         elif action.kind is ActionKind.TIMER_ACTION:
             self._invoke_timer(action)
-        elif action.kind is ActionKind.ENTITY and action.entity is not None:
-            if action.entity.is_controllable:
-                self._invoke(action.entity, long=False)
 
     # Public navigation entry points (also used by the export tool).
     def home(self) -> None:
@@ -698,13 +800,52 @@ class Navigation:
         lights.sort(key=lambda e: e.name.lower())
         return lights
 
-    def _grid_fits(self) -> bool:
-        cols = getattr(self.display, "cols", 0)
-        rows = self.display.key_count // cols if cols else 0
-        return cols >= 2 and rows >= 2
+    def _menu_is_history_only(self, options: list[Action]) -> bool:
+        """True when the menu offers nothing beyond Toggle and/or History — in
+        that case the long press goes straight to the history view."""
+        return {o.data["target"] for o in options} <= {"toggle", "history"}
 
-    def _open_light_grid(self, entity: DeviceEntity) -> None:
-        self._push(Frame(FrameKind.LIGHT_GRID, entity=entity))
+    def _open_entity_menu(self, entity: DeviceEntity) -> None:
+        """Open the long-press options menu — or, when the only options are
+        Toggle/History, go straight to the history view (single press toggles)."""
+        options = self._entity_menu_options(entity)
+        if self._menu_is_history_only(options):
+            self._open_history(entity)
+        else:
+            self._push(Frame(FrameKind.ENTITY_MENU, entity=entity))
+
+    def _dispatch_menu_target(self, entity: DeviceEntity, target: str | None) -> None:
+        """Act on a chosen menu option: open a sub-view or fire an action."""
+        if target == "toggle":
+            self._invoke(entity)  # same as a single press; stays in the menu (tile updates live)
+        elif target == "history":
+            self._open_history(entity)
+        elif target == "brightness":
+            self._push(Frame(FrameKind.PICKER, entity=entity, data={"type": "brightness"}))
+        elif target == "color":
+            self._push(Frame(FrameKind.PICKER, entity=entity, data={"type": "color"}))
+        elif target == "temperature":
+            self._push(Frame(FrameKind.PICKER, entity=entity, data={"type": "temperature"}))
+        elif target == "fan_speed":
+            # Presets when the fan exposes them, else a percentage scale.
+            if entity.preset_modes:
+                self._push(Frame(FrameKind.PRESETS, entity=entity))
+            else:
+                self._push(Frame(FrameKind.PICKER, entity=entity, data={"type": "fan_percentage"}))
+        elif target == "climate_temp":
+            self._open_climate_detail(entity)
+        elif target == "presets":
+            self._push(Frame(FrameKind.PRESETS, entity=entity))
+        elif target == "timer":
+            self._open_timer(entity)
+        elif target == "cover":
+            self._push(Frame(FrameKind.COVER_ACTIONS, entity=entity))
+        elif target == "position":
+            self._push(Frame(FrameKind.PICKER, entity=entity, data={"type": "cover_position"}))
+        elif target == "lock_open":
+            self._send(entity.long_press_call())
+            if self.stack[-1].kind is FrameKind.ENTITY_MENU:
+                self._pop()  # close the menu, back to the entity's view
 
     def _open_weather(self) -> None:
         if self.weather is None:
@@ -790,24 +931,21 @@ class Navigation:
                     self.display.set_image(key, self.renderer.weather_button(self.weather, bg=renderer_mod.RESERVED_BG))
                     return
 
-    def _apply_light_cell(self, action: Action) -> None:
-        call = ("light", "turn_on", action.entity.entity_id, action.data or {})
-        try:
-            self.on_service(call)
-        except Exception as exc:  # noqa: BLE001 - a bad call must not kill the deck thread
-            logger.warning("Service call %s failed: %s", call, exc)
+    def _apply_picker_cell(self, action: Action) -> None:
+        """Apply a picker swatch (brightness/color/temp/percentage) and close it."""
+        self._send((action.data or {}).get("call"))
         self._pop()  # apply and close the picker
 
-    def _invoke(self, entity: DeviceEntity, long: bool) -> None:
-        call = entity.long_press_call() if long else entity.service_call()
-        if call is None:  # long press on an entity without a long action -> short
-            call = entity.service_call()
-        if call is None:
-            return
-        try:
-            self.on_service(call)
-        except Exception as exc:  # noqa: BLE001 - a bad call must not kill the deck thread
-            logger.warning("Service call %s failed: %s", call, exc)
+    def _apply_service_button(self, action: Action) -> None:
+        """Fire a preset/cover button; close the view only if it asked to."""
+        d = action.data or {}
+        self._send(d.get("call"))
+        if d.get("close"):
+            self._pop()
+
+    def _invoke(self, entity: DeviceEntity) -> None:
+        """Fire an entity's single-press service call (toggle / lock / press / …)."""
+        self._send(entity.service_call())
 
     # -- live updates -------------------------------------------------------
 
@@ -827,9 +965,11 @@ class Navigation:
                 and frame.room.is_dynamic
                 and entity_id.startswith("light.")  # only lights change membership
             )
-            # The open timer / thermostat detail view rebuilds when its entity changes.
+            # Detail views that reflect live state rebuild when their entity
+            # changes (timer remaining, target temp, active preset, toggle state).
             viewing_detail = (
-                frame.kind in (FrameKind.TIMER, FrameKind.CLIMATE_DETAIL)
+                frame.kind in (FrameKind.TIMER, FrameKind.CLIMATE_DETAIL,
+                               FrameKind.PRESETS, FrameKind.ENTITY_MENU)
                 and frame.entity is not None
                 and frame.entity.entity_id == entity_id
             )
@@ -933,6 +1073,18 @@ def layout_room(
 
 def _ceil_div(a: int, b: int) -> int:
     return -(-a // b)
+
+
+def _spread(lo: int, hi: int, n: int) -> list[int]:
+    """``n`` values evenly spaced from ``lo`` to ``hi`` (inclusive), low→high."""
+    if n <= 1:
+        return [hi]
+    return [round(lo + (hi - lo) * i / (n - 1)) for i in range(n)]
+
+
+def _hues(n: int) -> list[int]:
+    """``n`` hues evenly spread around the color wheel (0→360°)."""
+    return [round(i * 360 / n) for i in range(max(1, n))]
 
 
 def layout_home(

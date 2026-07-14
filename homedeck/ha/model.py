@@ -142,6 +142,11 @@ class DeviceEntity:
         return self.domain in CONTROLLABLE_DOMAINS
 
     @property
+    def is_toggleable(self) -> bool:
+        """Toggled on/off by a single press (light/switch/input_boolean/fan/cover)."""
+        return self.domain in TOGGLE_DOMAINS
+
+    @property
     def is_off(self) -> bool:
         """An on/off device (light/switch/fan/input_boolean) that is currently off."""
         return self.domain in OFF_INDICATOR_DOMAINS and self.status is Status.OFF
@@ -384,11 +389,12 @@ class DeviceEntity:
         modes = set(self.attributes.get("supported_color_modes") or [])
         return bool(modes - {"onoff", None})
 
-    def icon_color(self) -> tuple[int, int, int] | None:
-        """The icon tint reflecting the light's current color/temperature/brightness.
+    def base_color(self) -> tuple[int, int, int] | None:
+        """The light's current color at *full* brightness (no dimming applied).
 
-        Returns None to fall back to the status palette — for non-lights, plain
-        on/off lights, or lights that are off/unavailable.
+        None for non-lights, plain on/off lights, or lights that are
+        off/unavailable. Falls back to warm white when a dimmable/colour light
+        is on but exposes no usable colour/temperature.
         """
         if not self.supports_dynamic_color or self.status is not Status.ON:
             return None
@@ -409,18 +415,36 @@ class DeviceEntity:
                 base = kelvin_to_rgb(int(kelvin))
             elif mireds:
                 base = kelvin_to_rgb(round(1_000_000 / int(mireds)))
-        if base is None:
-            base = WARM_WHITE  # brightness-only, or color info missing
+        return base or WARM_WHITE  # brightness-only, or color info missing
 
-        brightness = attrs.get("brightness")
+    def icon_color(self) -> tuple[int, int, int] | None:
+        """The icon tint reflecting the light's current color/temperature/brightness.
+
+        Returns None to fall back to the status palette — for non-lights, plain
+        on/off lights, or lights that are off/unavailable.
+        """
+        base = self.base_color()
+        if base is None:
+            return None
+        brightness = self.attributes.get("brightness")
         if brightness is not None:
             # Keep a floor so dim lights stay visible on the dark key.
             base = scale(base, max(0.45, int(brightness) / 255))
         return base
 
+    def color_temp_range(self) -> tuple[int, int]:
+        """The light's (min, max) color temperature in kelvin (with sane defaults)."""
+        return (int(self.attributes.get("min_color_temp_kelvin") or 2000),
+                int(self.attributes.get("max_color_temp_kelvin") or 6500))
+
     @property
-    def supports_light_grid(self) -> bool:
-        """A light that supports both dimming and color temperature.
+    def supports_brightness(self) -> bool:
+        """A light that can be dimmed (any color mode beyond plain on/off)."""
+        return self.supports_dynamic_color
+
+    @property
+    def supports_color_temp(self) -> bool:
+        """A light that supports color temperature.
 
         HA's ``color_temp`` color mode implies brightness support, so its
         presence in ``supported_color_modes`` is enough.
@@ -438,52 +462,49 @@ class DeviceEntity:
         modes = set(self.attributes.get("supported_color_modes") or [])
         return bool(modes & LIGHT_COLOR_MODES)
 
-    @staticmethod
-    def _brightness_levels(n: int) -> list[int]:
-        low = 10
-        if n <= 1:
-            return [100]
-        return [round(low + (100 - low) * i / (n - 1)) for i in range(n)]
+    def _features(self) -> int:
+        try:
+            return int(self.attributes.get("supported_features") or 0)
+        except (TypeError, ValueError):
+            return 0
 
-    def light_grid_levels(self, n_brightness: int = 4, n_color: int = 8) -> tuple[list[int], list[int]]:
-        """Return (brightness_percents, color_temp_kelvins), low→high.
+    @property
+    def supports_fan_speed(self) -> bool:
+        """A fan whose speed can be set (SET_SPEED / PRESET_MODE, or a % attr)."""
+        if self.domain != "fan":
+            return False
+        f = self._features()
+        return bool(f & 1 or f & 8 or self.preset_modes or self.attributes.get("percentage") is not None)
 
-        Brightness spans 10→100%; color temperature spans the light's own
-        ``min_color_temp_kelvin``→``max_color_temp_kelvin`` (its full range).
-        """
-        brightness = self._brightness_levels(n_brightness)
-        min_k = int(self.attributes.get("min_color_temp_kelvin") or 2000)
-        max_k = int(self.attributes.get("max_color_temp_kelvin") or 6500)
-        if n_color <= 1:
-            kelvins = [min_k]
-        else:
-            kelvins = [round(min_k + (max_k - min_k) * j / (n_color - 1)) for j in range(n_color)]
-        return brightness, kelvins
+    @property
+    def supports_cover_position(self) -> bool:
+        """A cover that supports SET_POSITION (or reports a current position)."""
+        if self.domain != "cover":
+            return False
+        return bool(self._features() & 4 or self.attributes.get("current_position") is not None)
 
-    def color_grid_levels(self, n_brightness: int = 4, n_color: int = 8) -> tuple[list[int], list[int]]:
-        """Return (brightness_percents, hues), for the RGB picker.
+    def fan_set_percentage_call(self, percentage: int) -> tuple[str, str, str, dict]:
+        return ("fan", "set_percentage", self.entity_id, {"percentage": int(percentage)})
 
-        Hues are spread evenly around the color wheel (0→360°).
-        """
-        brightness = self._brightness_levels(n_brightness)
-        hues = [round(j * 360 / n_color) for j in range(n_color)]
-        return brightness, hues
+    def fan_set_preset_call(self, preset: str) -> tuple[str, str, str, dict]:
+        return ("fan", "set_preset_mode", self.entity_id, {"preset_mode": preset})
+
+    def cover_set_position_call(self, position: int) -> tuple[str, str, str, dict]:
+        return ("cover", "set_cover_position", self.entity_id, {"position": int(position)})
 
     @property
     def supports_history(self) -> bool:
-        """Switches and binary sensors open a logbook/history view on long-press."""
+        """Switches and binary sensors get a dedicated on/off history palette.
+
+        (Every entity can open a logbook view from its options menu; this flag
+        only marks the domains whose logbook is a plain state timeline.)
+        """
         return self.domain in HISTORY_DOMAINS
 
     @property
     def has_long_press(self) -> bool:
-        return (
-            self.long_press_call() is not None
-            or self.supports_light_grid
-            or self.supports_rgb_color
-            or self.supports_history
-            or self.is_timer
-            or self.is_climate
-        )
+        """Every in-scope entity opens a long-press options menu (History at least)."""
+        return True
 
     def update_from_state(self, state: str, attributes: dict | None) -> None:
         self.state = state

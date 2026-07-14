@@ -110,7 +110,8 @@ def test_long_press_switch_opens_history(monkeypatch):
     assert calls == [("switch", "toggle", "switch.fan", {})]
     assert nav.stack[-1].kind is FrameKind.ROOM
 
-    # long press opens history
+    # long press: a switch's only options are Toggle + History, so it goes
+    # straight to the history view (single press already toggles)
     clock["t"] += 1.0
     nav.handle_press(key, True)
     clock["t"] += 1.0

@@ -43,10 +43,10 @@ def test_lock_long_press_opens():
     assert lock.long_press_call() == ("lock", "open", "lock.front", {})
 
 
-def test_non_lock_has_no_long_press():
+def test_non_lock_has_no_direct_long_action():
     light = DeviceEntity("light.x", "X", "light", "on")
-    assert light.has_long_press is False
-    assert light.long_press_call() is None
+    assert light.long_press_call() is None  # only locks have a direct long action
+    assert light.has_long_press is True      # but every entity opens the options menu
 
 
 # -- icons --------------------------------------------------------------------
@@ -107,29 +107,37 @@ def test_short_press_locks_or_unlocks(monkeypatch):
 
 
 @requires_assets
-def test_long_press_opens_door(monkeypatch):
+def test_long_press_opens_menu_then_open_door(monkeypatch):
     nav, calls, clock = _nav_with_lock(monkeypatch)
     key = _key_of(nav, "lock.front")
 
     nav.handle_press(key, pressed=True)
     clock["t"] += 1.0                       # held past the long-press threshold
     nav.handle_press(key, pressed=False)
+    # a lock has Open Door + History -> the options menu opens (nothing fired yet)
+    assert nav.stack[-1].kind is FrameKind.ENTITY_MENU
+    assert calls == []
+
+    open_key = next(k for k, a in nav.key_map.items()
+                    if a.kind is ActionKind.MENU_ITEM and a.data["target"] == "lock_open")
+    nav.handle_press(open_key, pressed=True)  # tap "Open Door"
     assert calls == [("lock", "open", "lock.front", {})]
+    assert nav.stack[-1].kind is FrameKind.ROOM  # menu closed, back to the room
 
 
 @requires_assets
-def test_hold_shows_feedback_then_restores(monkeypatch):
+def test_hold_shows_feedback_then_opens_menu(monkeypatch):
     nav, calls, clock = _nav_with_lock(monkeypatch)
     key = _key_of(nav, "lock.front")
 
     nav.handle_press(key, pressed=True)        # arms the hold timer
     nav._show_hold_feedback(key, nav.key_map[key].entity)  # simulate threshold reached
-    assert nav.display.images[key].getpixel((0, 0)) == FEEDBACK_BG  # "release to open" shown
+    assert nav.display.images[key].getpixel((0, 0)) == FEEDBACK_BG  # "release for options" shown
 
     clock["t"] += 1.0
-    nav.handle_press(key, pressed=False)        # release -> open + restore normal key
-    assert calls == [("lock", "open", "lock.front", {})]
-    assert nav.display.images[key].getpixel((0, 0)) != FEEDBACK_BG
+    nav.handle_press(key, pressed=False)        # release -> opens the options menu
+    assert nav.stack[-1].kind is FrameKind.ENTITY_MENU
+    assert calls == []                           # opening the menu fires nothing
 
 
 @requires_assets
@@ -145,11 +153,13 @@ def test_feedback_not_shown_if_released_early(monkeypatch):
     assert key not in nav.display.images or nav.display.images[key].getpixel((0, 0)) != FEEDBACK_BG
 
 
-def test_light_fires_immediately_on_press_down(monkeypatch):
+@requires_assets
+def test_light_toggles_on_short_release(monkeypatch):
     nav, calls, clock = _nav_with_lock(monkeypatch)
     key = _key_of(nav, "light.hall")
 
-    nav.handle_press(key, pressed=True)     # non-lock: immediate
+    nav.handle_press(key, pressed=True)     # every entity defers to release now
+    assert calls == []
+    clock["t"] += 0.1
+    nav.handle_press(key, pressed=False)    # short release -> toggle
     assert calls == [("light", "toggle", "light.hall", {})]
-    nav.handle_press(key, pressed=False)    # release is a no-op
-    assert len(calls) == 1

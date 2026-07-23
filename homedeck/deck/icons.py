@@ -58,6 +58,8 @@ DEVICE_CLASS_ICONS: dict[tuple[str, str], str] = {
     ("sensor", "carbon_dioxide"): "molecule-co2",
     ("sensor", "distance"): "ruler",
     ("sensor", "signal_strength"): "wifi",
+    ("sensor", "timestamp"): "clock-outline",
+    ("sensor", "date"): "calendar",
     ("binary_sensor", "motion"): "motion-sensor",
     ("binary_sensor", "door"): "door",
     ("binary_sensor", "window"): "window-closed-variant",

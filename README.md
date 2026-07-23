@@ -50,7 +50,9 @@ menu and opens it directly.
   from its config), falling back to the container `TZ`.
 - **Sensors & climate** — the current value is displayed. Within a room, the read-only
   sensors are grouped into a band at the **bottom rows**, separated from the controllable
-  devices in the top rows.
+  devices in the top rows. **Timestamp/date sensors** (device class `timestamp`/`date`, or any
+  sensor whose value is an ISO datetime like `2026-07-23T14:49:00+00:00`) show a **human relative
+  time** instead of the raw string — `5m ago`, `in 8h`, `in 2d` — under a clock icon.
 - **Covers, doors & windows** — all covers (blinds, shades, garage doors…) and
   door/window/garage/gate sensors show **green when closed** and **orange when open** (yellow
   while moving); door-like ones also switch between the closed and open icon.

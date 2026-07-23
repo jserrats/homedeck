@@ -120,6 +120,45 @@ def format_duration(seconds: float | None) -> str:
     return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
 
 
+def _parse_iso_datetime(value: object) -> datetime | None:
+    """Parse an ISO-8601 datetime/date string (e.g. HA timestamp sensors), else None."""
+    try:
+        text = str(value).strip().replace("Z", "+00:00")
+    except (TypeError, ValueError):
+        return None
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def humanize_datetime(dt: datetime, now: float | None = None) -> str | None:
+    """A compact, human relative time for a timestamp: 'now', '5m ago', 'in 2h',
+    '3d ago'. Handles past and future; None if the datetime can't be placed.
+
+    Rounds to the nearest unit (with moment.js-style thresholds) so a value a hair
+    under a boundary — or a future 'next X' sensor — doesn't read an hour short.
+    """
+    reference = now if now is not None else time.time()
+    try:
+        target = dt.timestamp()
+    except (ValueError, OverflowError, OSError):
+        return None
+    delta = target - reference
+    magnitude = abs(delta)
+    if magnitude < 45:
+        return "now"
+    if magnitude < 45 * 60:
+        value, unit = round(magnitude / 60), "m"
+    elif magnitude < 22 * 3600:
+        value, unit = round(magnitude / 3600), "h"
+    else:
+        value, unit = round(magnitude / 86400), "d"
+    return f"{value}{unit} ago" if delta < 0 else f"in {value}{unit}"
+
+
 # Most decimal places to show on a key; HA's own display precision isn't in the
 # state, so we just trim float noise (e.g. 78.40000000001 -> 78.4).
 MAX_DECIMALS = 2
@@ -292,6 +331,22 @@ class DeviceEntity:
     def explicit_icon(self) -> str | None:
         return self.attributes.get("icon")
 
+    def _sensor_datetime(self) -> datetime | None:
+        """A timestamp/date sensor's value as a datetime, else None.
+
+        Accepts any sensor whose ``device_class`` is timestamp/date, or whose
+        value is a full ISO datetime (contains a ``T``) — so a plain sensor that
+        holds e.g. ``2026-07-23T14:49:00+00:00`` is still recognised.
+        """
+        if self.domain != "sensor":
+            return None
+        dt = _parse_iso_datetime(self.state)
+        if dt is None:
+            return None
+        if (self.device_class or "").lower() in ("timestamp", "date") or "T" in str(self.state):
+            return dt
+        return None
+
     def display_value(self) -> str | None:
         """The text shown as the key's main value (sensors/climate), else None.
 
@@ -304,6 +359,11 @@ class DeviceEntity:
         if self.domain == "sensor":
             if self.status is Status.UNAVAILABLE:
                 return "—"
+            dt = self._sensor_datetime()
+            if dt is not None:  # a timestamp/date sensor -> human relative time
+                human = humanize_datetime(dt)
+                if human is not None:
+                    return human
             unit = self.attributes.get("unit_of_measurement", "")
             return _with_unit(_format_number(self.state), unit)
         if self.domain == "climate":

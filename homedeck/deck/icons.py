@@ -41,6 +41,7 @@ DOMAIN_ICONS: dict[str, str] = {
     "input_button": "gesture-tap-button",
     "timer": "timer-outline",
     "media_player": "cast",
+    "alarm_control_panel": "shield-home-outline",
 }
 
 # More specific defaults keyed by (domain, device_class).
@@ -137,6 +138,21 @@ def resolve_icon_name(
     if domain == "timer":
         s = (state or "").lower()
         name = "timer-play-outline" if s == "active" else "timer-pause-outline" if s == "paused" else "timer-outline"
+        if name in codepoints:
+            return name
+
+    if domain == "alarm_control_panel":
+        name = {
+            "disarmed": "shield-off-outline",
+            "armed_home": "shield-home",
+            "armed_away": "shield-lock",
+            "armed_night": "shield-moon",
+            "armed_vacation": "shield-airplane",
+            "armed_custom_bypass": "shield-half-full",
+            "arming": "shield-sync",
+            "pending": "shield-sync",
+            "triggered": "shield-alert",
+        }.get((state or "").lower(), "shield-home-outline")
         if name in codepoints:
             return name
 

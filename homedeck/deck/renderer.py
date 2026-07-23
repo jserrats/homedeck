@@ -389,6 +389,17 @@ class KeyRenderer:
         self._draw_label(draw, entity.name, y=int(self.h * 0.70), size=11, color=NAV_COLOR, max_lines=2)
         return img
 
+    def alarm_status(self, entity: DeviceEntity) -> Image.Image:
+        """Status tile for the alarm view: state-colored shield icon + state word."""
+        color = STATUS_COLORS.get(entity.status, NEUTRAL)
+        img, draw = self._canvas()
+        icon_name = icons.resolve_icon_name(entity.domain, entity.device_class, entity.explicit_icon, state=entity.state)
+        self._draw_glyph(draw, icons.glyph(icon_name), size=int(self.h * 0.34), cy=int(self.h * 0.30), color=color)
+        label = (entity.state or "—").replace("_", " ").upper()
+        self._draw_label(draw, label, y=int(self.h * 0.56), size=12, color=color, max_lines=1)
+        self._draw_label(draw, entity.name, y=int(self.h * 0.78), size=10, color=NAV_COLOR, max_lines=1)
+        return img
+
     def action_button(self, icon_name: str, label: str, color: tuple[int, int, int]) -> Image.Image:
         """A labeled action key (e.g. Pause / Cancel / Finish)."""
         img, draw = self._canvas()

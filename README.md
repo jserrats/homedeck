@@ -5,7 +5,7 @@ Control [Home Assistant](https://www.home-assistant.io/) from an **Elgato Stream
 Each Home Assistant **Area** becomes a folder on the deck. Open a room and its keys are
 auto-populated with that area's devices. A **single press** does the obvious thing (toggle a
 light/switch/fan/cover, lock/unlock a lock, fire a button, pause/resume a timer, turn a
-thermostat on/off, play/pause a media player), and a **long press** (hold ≈0.5 s) opens an **options menu** for that
+thermostat on/off, play/pause a media player, arm/disarm an alarm), and a **long press** (hold ≈0.5 s) opens an **options menu** for that
 entity — a tile per capability, tailored to what the entity supports. Hold and the key shows a
 blue **"Release for options"** hint so you know the long-press is armed; release to open the
 menu. Toggleable devices (lights, switches, input booleans, fans, covers) get a **Toggle** tile
@@ -27,6 +27,12 @@ menu and opens it directly.
 - **Locks** — an **Open Door** option (`lock.open`). The padlock icon is **green** when locked,
   **grey** when unlocked, a **yellow clock** while locking/unlocking, and a **red alert** when
   jammed.
+- **Alarm panels** (`alarm_control_panel`) — a single press **arms** (preferred mode) when
+  disarmed and **disarms** otherwise. A **long press** opens the panel: the current state, a
+  **Disarm** button and one button per supported **arm mode** (Home / Away / Night / Vacation)
+  with the active one highlighted, plus History. The shield icon is **green** when armed, **grey**
+  when disarmed, **yellow** while arming, and **orange** when triggered. (Panels that require a
+  code to arm/disarm need it entered in Home Assistant — the deck has no keypad.)
 - **Timers** — the key shows the remaining time; the menu's **Controls** option opens a detail
   view with the remaining time and **Pause/Resume, Cancel and Finish** buttons.
 - **Media players** — a single press **play/pauses**. The key's icon is the **album art of what's

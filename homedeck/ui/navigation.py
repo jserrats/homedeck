@@ -56,6 +56,7 @@ class FrameKind(Enum):
     PRESETS = auto()        # preset-mode buttons (fan / thermostat)
     COVER_ACTIONS = auto()  # open / stop / close buttons
     MEDIA = auto()          # media player: now playing + transport + volume
+    ALARM = auto()          # alarm panel: disarm / arm modes
     CLIMATE_DETAIL = auto()  # thermostat temperature controls
     WEATHER = auto()
     HISTORY = auto()
@@ -99,6 +100,7 @@ class ActionKind(Enum):
     MEDIA_ART = auto()       # one cell of the 3x3 album-art mosaic (non-interactive)
     MEDIA_TEXT = auto()      # song / artist / album text tile (non-interactive)
     MEDIA_VOLUME = auto()    # volume level readout (non-interactive)
+    ALARM_STATUS = auto()    # alarm state display (non-interactive)
     BACK = auto()
     PAGE = auto()
     BLANK = auto()
@@ -254,6 +256,8 @@ class Navigation:
             return self.renderer.media_meta(caption, value)
         if action.kind is ActionKind.MEDIA_VOLUME:
             return self.renderer.media_volume(action.entity)
+        if action.kind is ActionKind.ALARM_STATUS:
+            return self.renderer.alarm_status(action.entity)
         if action.kind is ActionKind.MENU_ITEM:
             d = action.data or {}
             if d.get("target") == "toggle":  # the Toggle tile reflects the live status
@@ -353,6 +357,8 @@ class Navigation:
             return self._cover_actions_key_map(frame)
         if frame.kind is FrameKind.MEDIA:
             return self._media_key_map(frame)
+        if frame.kind is FrameKind.ALARM:
+            return self._alarm_key_map(frame)
         if frame.kind is FrameKind.CLIMATE_DETAIL:
             return self._climate_detail_key_map(frame)
         if frame.kind is FrameKind.WEATHER:
@@ -586,6 +592,39 @@ class Navigation:
                     result[start + i] = action
         return result
 
+    def _alarm_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Alarm panel: Back, a status tile, then Disarm + the supported arm
+        modes (the active one highlighted), and History."""
+        entity = frame.entity
+        result: dict[int, Action] = {0: Action(ActionKind.BACK), 1: Action(ActionKind.ALARM_STATUS, entity=entity)}
+        if entity is None:
+            return result
+        state = (entity.state or "").lower()
+
+        def sbtn(call, label, icon, color, active):
+            return Action(ActionKind.SERVICE_BUTTON, entity=entity, data={
+                "call": call, "label": label, "icon": icon, "color": color, "active": active, "close": False})
+
+        buttons = [sbtn(entity.alarm_disarm_call(), "Disarm", "shield-off",
+                        renderer_mod.NAV_COLOR, active=state == "disarmed")]
+        modes = [("home", "Home", "shield-home", entity.supports_arm_home),
+                 ("away", "Away", "shield-lock", entity.supports_arm_away),
+                 ("night", "Night", "shield-moon", entity.supports_arm_night),
+                 ("vacation", "Vacation", "shield-airplane", entity.supports_arm_vacation)]
+        for mode, label, icon, supported in modes:
+            if supported:
+                buttons.append(sbtn(entity.alarm_arm_call(mode), label, icon,
+                                    renderer_mod.SECURE, active=state == f"armed_{mode}"))
+        buttons.append(Action(ActionKind.MENU_ITEM, entity=entity,
+                              data={"target": "history", "label": "History", "icon": "history"}))
+
+        for i, action in enumerate(buttons):
+            key = 2 + i
+            if key >= self.display.key_count:
+                break
+            result[key] = action
+        return result
+
     def _cover_actions_key_map(self, frame: Frame) -> dict[int, Action]:
         """Cover controls: Back, then Open / Stop / Close buttons."""
         entity = frame.entity
@@ -707,17 +746,19 @@ class Navigation:
         return layout_security(groups, self.display.key_count, cols, frame.page)
 
     def _collect_security_groups(self) -> list[list[DeviceEntity]]:
-        """Locks, then closures, then presence sensors — each sorted, empties dropped."""
-        locks, closures, presence = [], [], []
+        """Alarms, then locks, then closures, then presence — sorted, empties dropped."""
+        alarms, locks, closures, presence = [], [], [], []
         for room in self.rooms:
             for entity in room.entities:
-                if entity.domain == "lock":
+                if entity.is_alarm:
+                    alarms.append(entity)
+                elif entity.domain == "lock":
                     locks.append(entity)
                 elif entity.is_closure:
                     closures.append(entity)
                 elif entity.is_presence:
                     presence.append(entity)
-        groups = [locks, closures, presence]
+        groups = [alarms, locks, closures, presence]
         for group in groups:
             group.sort(key=lambda e: e.name.lower())
         return [g for g in groups if g]
@@ -824,7 +865,7 @@ class Navigation:
         with self._lock:
             if self._disconnected or key not in self._press_start:
                 return  # released (or disconnected) before the threshold
-            if entity.is_media_player:
+            if entity.is_media_player or entity.is_alarm:
                 img = self.renderer.hold_feedback("play-box", "Release for controls")
             elif self._menu_is_history_only(self._entity_menu_options(entity)):
                 img = self.renderer.hold_feedback("history", "Release for history")
@@ -857,7 +898,8 @@ class Navigation:
                              ActionKind.HISTORY_TITLE, ActionKind.HISTORY_EVENT,
                              ActionKind.TIMER_STATUS, ActionKind.CLIMATE_TEMP,
                              ActionKind.CLIMATE_STATUS, ActionKind.MEDIA_ART,
-                             ActionKind.MEDIA_TEXT, ActionKind.MEDIA_VOLUME):
+                             ActionKind.MEDIA_TEXT, ActionKind.MEDIA_VOLUME,
+                             ActionKind.ALARM_STATUS):
             return  # forecast/history/status/media-info tiles are not interactive
         elif action.kind is ActionKind.MENU_ITEM:
             self._dispatch_menu_target(action.entity, (action.data or {}).get("target"))
@@ -944,6 +986,9 @@ class Navigation:
         A media player opens its controls (Now Playing) directly."""
         if entity.is_media_player:
             self._push(Frame(FrameKind.MEDIA, entity=entity))
+            return
+        if entity.is_alarm:
+            self._push(Frame(FrameKind.ALARM, entity=entity))
             return
         options = self._entity_menu_options(entity)
         if self._menu_is_history_only(options):
@@ -1106,7 +1151,7 @@ class Navigation:
             # changes (timer remaining, target temp, active preset, toggle state).
             viewing_detail = (
                 frame.kind in (FrameKind.TIMER, FrameKind.CLIMATE_DETAIL, FrameKind.PRESETS,
-                               FrameKind.ENTITY_MENU, FrameKind.MEDIA)
+                               FrameKind.ENTITY_MENU, FrameKind.MEDIA, FrameKind.ALARM)
                 and frame.entity is not None
                 and frame.entity.entity_id == entity_id
             )

@@ -51,11 +51,20 @@ MEDIA_NEXT_TRACK = 32
 MEDIA_VOLUME_STEP = 1024
 MEDIA_STOP = 4096
 
+ALARM_DOMAIN = "alarm_control_panel"
+
+# alarm_control_panel supported_features bits (AlarmControlPanelEntityFeature).
+ALARM_ARM_HOME = 1
+ALARM_ARM_AWAY = 2
+ALARM_ARM_NIGHT = 4
+ALARM_ARM_VACATION = 32
+
 # Domains whose long-press opens a state-history / logbook view.
 HISTORY_DOMAINS = frozenset({"switch", "binary_sensor"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
 CONTROLLABLE_DOMAINS = (
-    TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS | {TIMER_DOMAIN} | {"climate", MEDIA_PLAYER_DOMAIN}
+    TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS | {TIMER_DOMAIN}
+    | {"climate", MEDIA_PLAYER_DOMAIN, ALARM_DOMAIN}
 )
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
 
@@ -241,6 +250,16 @@ class DeviceEntity:
             if state in ("paused", "buffering"):
                 return Status.PENDING
             return Status.OFF  # idle / off / standby / on
+        if self.domain == ALARM_DOMAIN:
+            if state in UNAVAILABLE_STATES:
+                return Status.UNAVAILABLE
+            if state == "triggered":
+                return Status.OPEN       # alarming (orange)
+            if state in ("arming", "pending"):
+                return Status.PENDING    # exit/entry countdown (yellow)
+            if state.startswith("armed"):
+                return Status.SECURE     # armed (green)
+            return Status.OFF            # disarmed
         if self.domain == "cover":
             # All covers: closed = green, open = orange, moving = pending.
             if state in UNAVAILABLE_STATES:
@@ -315,6 +334,11 @@ class DeviceEntity:
             return self.climate_power_call()
         if self.domain == MEDIA_PLAYER_DOMAIN:
             return (MEDIA_PLAYER_DOMAIN, "media_play_pause", self.entity_id, {})
+        if self.domain == ALARM_DOMAIN:
+            # Toggle like a lock: arm (preferred mode) when disarmed, else disarm.
+            if (self.state or "").lower() == "disarmed":
+                return self._alarm_preferred_arm_call()
+            return self.alarm_disarm_call()
         return None
 
     @property
@@ -481,6 +505,50 @@ class DeviceEntity:
 
     def volume_mute_call(self, mute: bool) -> tuple[str, str, str, dict]:
         return self.media_service_call("volume_mute", {"is_volume_muted": mute})
+
+    # -- alarm control panel ------------------------------------------------
+
+    @property
+    def is_alarm(self) -> bool:
+        return self.domain == ALARM_DOMAIN
+
+    @property
+    def is_armed(self) -> bool:
+        return self.is_alarm and (self.state or "").lower().startswith("armed")
+
+    @property
+    def supports_arm_home(self) -> bool:
+        return self.is_alarm and bool(self._features() & ALARM_ARM_HOME)
+
+    @property
+    def supports_arm_away(self) -> bool:
+        return self.is_alarm and bool(self._features() & ALARM_ARM_AWAY)
+
+    @property
+    def supports_arm_night(self) -> bool:
+        return self.is_alarm and bool(self._features() & ALARM_ARM_NIGHT)
+
+    @property
+    def supports_arm_vacation(self) -> bool:
+        return self.is_alarm and bool(self._features() & ALARM_ARM_VACATION)
+
+    def alarm_arm_call(self, mode: str) -> tuple[str, str, str, dict]:
+        return (ALARM_DOMAIN, f"alarm_arm_{mode}", self.entity_id, {})
+
+    def alarm_disarm_call(self) -> tuple[str, str, str, dict]:
+        return (ALARM_DOMAIN, "alarm_disarm", self.entity_id, {})
+
+    def _alarm_preferred_arm_call(self) -> tuple[str, str, str, dict] | None:
+        """The arm mode a single press uses: away > home > night > vacation."""
+        if self.supports_arm_away:
+            return self.alarm_arm_call("away")
+        if self.supports_arm_home:
+            return self.alarm_arm_call("home")
+        if self.supports_arm_night:
+            return self.alarm_arm_call("night")
+        if self.supports_arm_vacation:
+            return self.alarm_arm_call("vacation")
+        return None
 
     @property
     def supports_dynamic_color(self) -> bool:

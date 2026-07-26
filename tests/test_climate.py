@@ -179,28 +179,15 @@ def test_short_press_toggles_long_press_opens_detail(monkeypatch):
     assert calls == [("climate", "turn_off", "climate.living", {})]
     assert nav.stack[-1].kind is FrameKind.ROOM
 
-    # long press opens the options menu; "Temperature" opens the detail view
+    # long press opens the thermostat control view directly
     clock["t"] += 1.0
     nav.handle_press(key, True)
     clock["t"] += 1.0
     nav.handle_press(key, False)
-    assert nav.stack[-1].kind is FrameKind.ENTITY_MENU
-    temp_key = next(k for k, a in nav.key_map.items()
-                    if a.kind is ActionKind.MENU_ITEM and a.data["target"] == "climate_temp")
-    nav.handle_press(temp_key, True)
     assert nav.stack[-1].kind is FrameKind.CLIMATE_DETAIL
 
 
-def test_climate_menu_lists_temperature_presets_and_history():
-    nav = _thermo_nav("heat")
-    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.ENTITY_MENU, entity=_thermostat())]
-    view = nav._build_key_map()
-    assert view[0].kind is ActionKind.BACK
-    targets = [a.data["target"] for a in view.values() if a.kind is ActionKind.MENU_ITEM]
-    assert targets == ["climate_temp", "presets", "history"]
-
-
-def test_detail_layout_has_status_adjust_and_power():
+def test_detail_layout_has_status_adjust_power_presets_and_history():
     nav = _thermo_nav("heat")
     nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.CLIMATE_DETAIL, entity=_thermostat())]
     view = nav._build_key_map()
@@ -209,8 +196,10 @@ def test_detail_layout_has_status_adjust_and_power():
     assert view[2].kind is ActionKind.CLIMATE_ADJUST and view[2].delta == -1
     assert view[3].kind is ActionKind.CLIMATE_ADJUST and view[3].delta == 1
     assert view[4].kind is ActionKind.CLIMATE_POWER
-    # presets now live in their own view, not the temperature detail
-    assert not any(a.kind is ActionKind.SERVICE_BUTTON for a in view.values())
+    # presets are now inline (keys >= 5), followed by a History tile
+    presets = [a for a in view.values() if a.kind is ActionKind.SERVICE_BUTTON]
+    assert [a.data["call"][3]["preset_mode"] for a in presets] == ["eco", "comfort", "boost"]
+    assert any(a.kind is ActionKind.MENU_ITEM and a.data["target"] == "history" for a in view.values())
 
 
 def test_pressing_adjust_sets_new_target_temperature():
@@ -233,12 +222,12 @@ def test_adjust_clamps_to_thermostat_range():
     assert t.climate_set_temperature_call(30.5) == ("climate", "set_temperature", "climate.living", {"temperature": 30})
 
 
-def test_presets_view_layout_and_active_highlight():
+def test_presets_layout_and_active_highlight():
     nav = _thermo_nav("heat")
-    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.PRESETS, entity=_thermostat())]
+    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.CLIMATE_DETAIL, entity=_thermostat())]
     view = nav._build_key_map()
     assert view[0].kind is ActionKind.BACK
-    assert view[1].kind is ActionKind.CLIMATE_STATUS  # thermostat presets show status
+    assert view[1].kind is ActionKind.CLIMATE_STATUS
     presets = [a for a in view.values() if a.kind is ActionKind.SERVICE_BUTTON]
     assert [a.data["call"][3]["preset_mode"] for a in presets] == ["eco", "comfort", "boost"]
     # the current preset ("comfort") is highlighted
@@ -249,7 +238,7 @@ def test_pressing_preset_sets_preset_mode():
     calls = []
     nav = _thermo_nav("heat")
     nav.on_service = calls.append
-    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.PRESETS, entity=_thermostat())]
+    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.CLIMATE_DETAIL, entity=_thermostat())]
     nav.key_map = nav._build_key_map()
     eco_key = next(k for k, a in nav.key_map.items()
                    if a.kind is ActionKind.SERVICE_BUTTON and a.data["call"][3].get("preset_mode") == "eco")

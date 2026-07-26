@@ -26,7 +26,8 @@ def _nav(on_reload=None, weather=None):
 def _special_keys(key_map):
     return [k for k, a in key_map.items()
             if a.kind in (ActionKind.OPEN_SECURITY, ActionKind.OPEN_CLIMATE,
-                          ActionKind.OPEN_WEATHER, ActionKind.OPEN_SETTINGS)
+                          ActionKind.OPEN_WEATHER, ActionKind.OPEN_SETTINGS,
+                          ActionKind.CLOCK, ActionKind.DATE)
             or (a.kind is ActionKind.OPEN_ROOM and a.room.is_dynamic)]
 
 
@@ -111,18 +112,20 @@ def test_pressing_rotate_invokes_callback():
 
 
 def test_portrait_home_pins_specials_to_bottom_row():
-    # A 4-wide (portrait) display -> 8 rows; specials sit on the last row (28..31).
+    # A 4-wide (portrait) display -> 8 rows; specials sit in the reserved bottom
+    # band (last two rows, keys 24..31).
     display = ExportDisplay(cols=4)
     room = Room("living", "Living", entities=[DeviceEntity("light.l", "L", "light", "on")])
     nav = Navigation(display, KeyRenderer(display.key_size), [room], on_service=lambda c: None)
     home = nav._build_key_map()
-    assert all(k >= 28 for k in _special_keys(home))
+    assert all(k >= 24 for k in _special_keys(home))
 
 
 # -- reserved special-folder band ---------------------------------------------
 
 _SPECIAL_KINDS = {ActionKind.OPEN_SECURITY, ActionKind.OPEN_CLIMATE, ActionKind.OPEN_WEATHER,
-                  ActionKind.OPEN_SETTINGS, ActionKind.RESERVED_BLANK}
+                  ActionKind.OPEN_SETTINGS, ActionKind.CLOCK, ActionKind.DATE,
+                  ActionKind.RESERVED_BLANK}
 
 
 def _is_special_or_band(a):

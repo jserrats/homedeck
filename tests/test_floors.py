@@ -77,6 +77,8 @@ def test_home_groups_rooms_under_floor_headers():
         ("OPEN_ROOM", "Lights On"),
         ("OPEN_SECURITY", "Security"),
         ("OPEN_CLIMATE", "Climate"),
+        ("CLOCK", None),
+        ("DATE", None),
         ("OPEN_SETTINGS", "Settings"),
     ]
 

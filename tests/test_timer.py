@@ -82,15 +82,11 @@ def test_short_press_toggles_long_press_opens_detail(monkeypatch):
     assert calls == [("timer", "pause", "timer.pomodoro", {})]
     assert nav.stack[-1].kind is FrameKind.ROOM
 
-    # long press opens the options menu; "Controls" opens the timer detail view
+    # long press opens the timer control view directly
     clock["t"] += 1.0
     nav.handle_press(key, True)
     clock["t"] += 1.0
     nav.handle_press(key, False)
-    assert nav.stack[-1].kind is FrameKind.ENTITY_MENU
-    ctrl = next(k for k, a in nav.key_map.items()
-                if a.kind is ActionKind.MENU_ITEM and a.data["target"] == "timer")
-    nav.handle_press(ctrl, True)
     assert nav.stack[-1].kind is FrameKind.TIMER
 
 

@@ -7,6 +7,7 @@ usable without any hardware attached (e.g. for ``--export``).
 
 from __future__ import annotations
 
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
@@ -332,6 +333,24 @@ class KeyRenderer:
         self._draw_glyph(draw, icons.glyph(weather.icon), size=int(self.h * 0.30), cy=int(self.h * 0.24), color=WEATHER_ACCENT)
         draw.text((self.w / 2, self.h * 0.55), weather.temp_text(), font=self._value_font(int(self.h * 0.26)), fill=TEXT, anchor="mm")
         self._draw_label(draw, "Weather", y=int(self.h * 0.76), size=11, color=NAV_COLOR, max_lines=1)
+        return img
+
+    def clock_tile(self, dt: datetime, bg: tuple[int, int, int] = RESERVED_BG) -> Image.Image:
+        """Home-screen tile showing the current local time (HH:MM)."""
+        img = Image.new("RGB", (self.w, self.h), bg)
+        draw = ImageDraw.Draw(img)
+        text = dt.strftime("%H:%M")
+        font = self._fit_value_font(text, max_size=int(self.h * 0.30), max_width=self.w - 16)
+        draw.text((self.w / 2, self.h * 0.5), text, font=font, fill=TEXT, anchor="mm")
+        return img
+
+    def date_tile(self, dt: datetime, bg: tuple[int, int, int] = RESERVED_BG) -> Image.Image:
+        """Home-screen tile showing the weekday over the month/day."""
+        img = Image.new("RGB", (self.w, self.h), bg)
+        draw = ImageDraw.Draw(img)
+        self._draw_label(draw, dt.strftime("%A"), y=int(self.h * 0.18), size=12, color=NAV_COLOR, max_lines=1)
+        draw.text((self.w / 2, self.h * 0.58), dt.strftime("%b %d"),
+                  font=self._value_font(int(self.h * 0.26)), fill=TEXT, anchor="mm")
         return img
 
     def weather_day(self, day: ForecastDay) -> Image.Image:

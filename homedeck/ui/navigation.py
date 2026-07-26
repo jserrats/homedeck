@@ -22,7 +22,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from datetime import tzinfo
+from datetime import datetime, tzinfo
 from enum import Enum, auto
 from typing import Callable
 
@@ -51,13 +51,13 @@ class FrameKind(Enum):
     ROOM = auto()
     SECURITY = auto()
     CLIMATE = auto()
-    ENTITY_MENU = auto()    # long-press options menu for an entity
+    ENTITY_MENU = auto()    # long-press options menu (lights / locks)
     PICKER = auto()         # single-dimension swatch grid (brightness/color/temp/%)
-    PRESETS = auto()        # preset-mode buttons (fan / thermostat)
-    COVER_ACTIONS = auto()  # open / stop / close buttons
+    FAN = auto()            # fan controls: toggle + speed presets / picker
+    COVER_ACTIONS = auto()  # cover controls: toggle + open/stop/close + position
     MEDIA = auto()          # media player: now playing + transport + volume
     ALARM = auto()          # alarm panel: disarm / arm modes
-    CLIMATE_DETAIL = auto()  # thermostat temperature controls
+    CLIMATE_DETAIL = auto()  # thermostat: temperature + presets
     WEATHER = auto()
     HISTORY = auto()
     TIMER = auto()
@@ -81,6 +81,8 @@ class ActionKind(Enum):
     OPEN_CLIMATE = auto()
     OPEN_WEATHER = auto()
     OPEN_SETTINGS = auto()
+    CLOCK = auto()          # live local-time tile (non-interactive)
+    DATE = auto()           # live date + weekday tile (non-interactive)
     CLIMATE_TEMP = auto()  # a temperature sensor tile, labelled by its room
     SETTINGS_ITEM = auto()  # an action button inside the Settings folder
     FLOOR_HEADER = auto()  # non-interactive section label
@@ -189,6 +191,8 @@ class Navigation:
         self._hold_timers: dict[int, threading.Timer] = {}  # key -> armed-feedback timer
         self._lock = threading.RLock()
         self._disconnected = False
+        self._clock_shown = ""  # last clock/date text drawn, so tick() only redraws on change
+        self._date_shown = ""
 
     # -- rendering ----------------------------------------------------------
 
@@ -218,6 +222,10 @@ class Navigation:
             return self.renderer.weather_button(self.weather, bg=renderer_mod.RESERVED_BG)
         if action.kind is ActionKind.OPEN_SETTINGS:
             return self.renderer.room(action.room, accent=renderer_mod.SETTINGS_ACCENT, bg=renderer_mod.RESERVED_BG)
+        if action.kind is ActionKind.CLOCK:
+            return self.renderer.clock_tile(datetime.now(self.tz))
+        if action.kind is ActionKind.DATE:
+            return self.renderer.date_tile(datetime.now(self.tz))
         if action.kind is ActionKind.SETTINGS_ITEM:
             d = action.data or {}
             return self.renderer.action_button(d["icon"], d["label"], d["color"])
@@ -351,8 +359,8 @@ class Navigation:
             return self._entity_menu_key_map(frame)
         if frame.kind is FrameKind.PICKER:
             return self._picker_key_map(frame)
-        if frame.kind is FrameKind.PRESETS:
-            return self._presets_key_map(frame)
+        if frame.kind is FrameKind.FAN:
+            return self._fan_key_map(frame)
         if frame.kind is FrameKind.COVER_ACTIONS:
             return self._cover_actions_key_map(frame)
         if frame.kind is FrameKind.MEDIA:
@@ -384,8 +392,35 @@ class Navigation:
                             "color": renderer_mod.SETTINGS_ACCENT}),
         }
 
+    def _history_tile(self, entity: DeviceEntity | None) -> Action:
+        """A History option tile (opens the full-screen logbook when pressed)."""
+        return Action(ActionKind.MENU_ITEM, entity=entity,
+                      data={"target": "history", "label": "History", "icon": "history"})
+
+    def _preset_buttons(self, entity: DeviceEntity | None) -> list[Action]:
+        """One preset-mode button per ``preset_modes`` (fan or thermostat); the
+        active preset is highlighted. Tapping applies it and stays in the view."""
+        active = entity.preset_mode if entity else None
+        return [
+            Action(ActionKind.SERVICE_BUTTON, entity=entity, data={
+                "call": (entity.domain, "set_preset_mode", entity.entity_id, {"preset_mode": name}),
+                "label": name.replace("_", " ").title(),
+                "icon": renderer_mod.PRESET_ICONS.get(name.lower(), "tune"),
+                "color": renderer_mod.CLIMATE_ACCENT, "active": name == active, "close": False,
+            })
+            for name in (entity.preset_modes if entity else [])
+        ]
+
+    def _place(self, result: dict[int, Action], tiles: list[Action], start: int) -> None:
+        """Place ``tiles`` sequentially from key ``start``, stopping at the deck edge."""
+        for i, tile in enumerate(tiles):
+            key = start + i
+            if key >= self.display.key_count:
+                break
+            result[key] = tile
+
     def _timer_key_map(self, frame: Frame) -> dict[int, Action]:
-        """Timer detail: Back, remaining-time status, then Pause/Resume, Cancel, Finish."""
+        """Timer controls: Back, remaining-time status, Pause/Resume, Cancel, Finish, History."""
         entity = frame.entity
         state = (entity.state or "").lower() if entity else ""
         if state == "active":
@@ -404,14 +439,14 @@ class Navigation:
                       data={"service": "cancel", "label": "Cancel", "icon": "close", "color": renderer_mod.UNAVAILABLE}),
             4: Action(ActionKind.TIMER_ACTION, entity=entity,
                       data={"service": "finish", "label": "Finish", "icon": "flag-checkered", "color": renderer_mod.WEATHER_ACCENT}),
+            5: self._history_tile(entity),
         }
 
     def _climate_detail_key_map(self, frame: Frame) -> dict[int, Action]:
-        """Thermostat temperature controls: Back, a target/current-temp status,
-        −/+ whole-degree set-point buttons, and an on/off toggle. (Presets have
-        their own view, reached from the entity menu.)"""
+        """Thermostat controls: Back, a target/current-temp status, −/+ whole-degree
+        set-point buttons, an on/off toggle, then the preset modes and History."""
         entity = frame.entity
-        return {
+        result = {
             0: Action(ActionKind.BACK),
             1: Action(ActionKind.CLIMATE_STATUS, entity=entity),
             2: Action(ActionKind.CLIMATE_ADJUST, entity=entity, delta=-1,
@@ -420,6 +455,25 @@ class Navigation:
                       data={"label": "+1°", "icon": "thermometer-plus"}),
             4: Action(ActionKind.CLIMATE_POWER, entity=entity),
         }
+        self._place(result, self._preset_buttons(entity) + [self._history_tile(entity)], start=5)
+        return result
+
+    def _fan_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Fan controls: Back, Toggle, the speed presets (or a Speed picker button
+        when the fan only exposes a percentage), then History."""
+        entity = frame.entity
+        result = {
+            0: Action(ActionKind.BACK),
+            1: Action(ActionKind.MENU_ITEM, entity=entity,
+                      data={"target": "toggle", "label": "Toggle", "icon": "toggle-switch-variant"}),
+        }
+        if entity is not None and entity.preset_modes:
+            speed = self._preset_buttons(entity)
+        else:
+            speed = [Action(ActionKind.MENU_ITEM, entity=entity,
+                            data={"target": "fan_speed", "label": "Speed", "icon": "fan-speed-1"})]
+        self._place(result, speed + [self._history_tile(entity)], start=2)
+        return result
 
     def _entity_menu_key_map(self, frame: Frame) -> dict[int, Action]:
         """Long-press options menu: Back, then one tile per capability."""
@@ -427,7 +481,13 @@ class Navigation:
         return layout_page(options, self.display.key_count, {0: Action(ActionKind.BACK)}, frame.page)
 
     def _entity_menu_options(self, entity: DeviceEntity | None) -> list[Action]:
-        """The capability tiles offered for ``entity`` (History is always last)."""
+        """Capability tiles for the button-menu (History is always last).
+
+        Only lights and locks use this menu: their controls each need the whole
+        screen (light pickers) or fire directly (lock). Every other controllable
+        type opens a combined control view directly on long press
+        (see ``_open_entity_menu``); read-only entities skip straight to History.
+        """
         def item(target: str, label: str, icon: str) -> Action:
             return Action(ActionKind.MENU_ITEM, entity=entity,
                           data={"target": target, "label": label, "icon": icon})
@@ -444,22 +504,8 @@ class Navigation:
                     opts.append(item("color", "Color", "palette"))
                 if entity.supports_color_temp:
                     opts.append(item("temperature", "Warmth", "thermometer-lines"))
-            elif d == "fan":
-                if entity.supports_fan_speed:
-                    opts.append(item("fan_speed", "Speed", "fan-speed-1"))
-            elif entity.is_climate:
-                opts.append(item("climate_temp", "Temperature", "thermostat"))
-                if entity.preset_modes:
-                    opts.append(item("presets", "Presets", "tune"))
             elif d == "lock":
                 opts.append(item("lock_open", "Open Door", "door-open"))
-            elif entity.is_timer:
-                opts.append(item("timer", "Controls", "timer-cog"))
-            elif d == "cover":
-                opts.append(item("cover", "Controls", "arrow-up-down"))
-                if entity.supports_cover_position:
-                    opts.append(item("position", "Position", "arrow-expand-vertical"))
-            # media players skip the menu: a long press opens their controls directly.
         opts.append(item("history", "History", "history"))
         return opts
 
@@ -504,28 +550,6 @@ class Navigation:
             return [cell(entity.cover_set_position_call(p), {"type": "percent", "pct": p})
                     for p in _spread(0, 100, n)]
         return []
-
-    def _presets_key_map(self, frame: Frame) -> dict[int, Action]:
-        """Preset-mode buttons for a fan or thermostat (thermostat also gets a
-        status tile). Tapping a preset applies it; the active one is highlighted."""
-        entity = frame.entity
-        result: dict[int, Action] = {0: Action(ActionKind.BACK)}
-        start = 1
-        if entity is not None and entity.is_climate:
-            result[1] = Action(ActionKind.CLIMATE_STATUS, entity=entity)
-            start = 2
-        active = entity.preset_mode if entity else None
-        for i, name in enumerate(entity.preset_modes if entity else []):
-            key = start + i
-            if key >= self.display.key_count:
-                break
-            result[key] = Action(ActionKind.SERVICE_BUTTON, entity=entity, data={
-                "call": (entity.domain, "set_preset_mode", entity.entity_id, {"preset_mode": name}),
-                "label": name.replace("_", " ").title(),
-                "icon": renderer_mod.PRESET_ICONS.get(name.lower(), "tune"),
-                "color": renderer_mod.CLIMATE_ACCENT, "active": name == active, "close": False,
-            })
-        return result
 
     def _media_key_map(self, frame: Frame) -> dict[int, Action]:
         """Now Playing: the album art as a 3x3 mosaic, with the transport buttons
@@ -626,7 +650,8 @@ class Navigation:
         return result
 
     def _cover_actions_key_map(self, frame: Frame) -> dict[int, Action]:
-        """Cover controls: Back, then Open / Stop / Close buttons."""
+        """Cover controls: Back, Open / Stop / Close (these supersede a plain
+        toggle), then Position (when supported) and History."""
         entity = frame.entity
         eid = entity.entity_id if entity else ""
 
@@ -635,12 +660,19 @@ class Navigation:
                 "call": ("cover", service, eid, {}), "label": label, "icon": icon,
                 "color": color, "active": False, "close": False})
 
-        return {
+        result = {
             0: Action(ActionKind.BACK),
             1: btn("open_cover", "Open", "arrow-up-bold", renderer_mod.ACCENT),
             2: btn("stop_cover", "Stop", "stop", renderer_mod.UNAVAILABLE),
             3: btn("close_cover", "Close", "arrow-down-bold", renderer_mod.NAV_COLOR),
         }
+        trailing: list[Action] = []
+        if entity is not None and entity.supports_cover_position:
+            trailing.append(Action(ActionKind.MENU_ITEM, entity=entity,
+                                   data={"target": "position", "label": "Position", "icon": "arrow-expand-vertical"}))
+        trailing.append(self._history_tile(entity))
+        self._place(result, trailing, start=4)
+        return result
 
     def _history_key_map(self, frame: Frame) -> dict[int, Action]:
         """History view: Back, an entity-name header, then newest-first events."""
@@ -704,6 +736,8 @@ class Navigation:
         ]
         if self.weather is not None:
             specials.append(Action(ActionKind.OPEN_WEATHER))
+        specials.append(Action(ActionKind.CLOCK))   # live local time
+        specials.append(Action(ActionKind.DATE))    # live date + weekday
         specials.append(Action(ActionKind.OPEN_SETTINGS, room=self.settings_folder))  # always last
         cols = getattr(self.display, "cols", 0)
         if not cols:  # no grid info: content first, specials at the end
@@ -865,7 +899,7 @@ class Navigation:
         with self._lock:
             if self._disconnected or key not in self._press_start:
                 return  # released (or disconnected) before the threshold
-            if entity.is_media_player or entity.is_alarm:
+            if self._opens_controls(entity):
                 img = self.renderer.hold_feedback("play-box", "Release for controls")
             elif self._menu_is_history_only(self._entity_menu_options(entity)):
                 img = self.renderer.hold_feedback("history", "Release for history")
@@ -899,8 +933,8 @@ class Navigation:
                              ActionKind.TIMER_STATUS, ActionKind.CLIMATE_TEMP,
                              ActionKind.CLIMATE_STATUS, ActionKind.MEDIA_ART,
                              ActionKind.MEDIA_TEXT, ActionKind.MEDIA_VOLUME,
-                             ActionKind.ALARM_STATUS):
-            return  # forecast/history/status/media-info tiles are not interactive
+                             ActionKind.ALARM_STATUS, ActionKind.CLOCK, ActionKind.DATE):
+            return  # forecast/history/status/media-info/clock tiles are not interactive
         elif action.kind is ActionKind.MENU_ITEM:
             self._dispatch_menu_target(action.entity, (action.data or {}).get("target"))
         elif action.kind is ActionKind.PICKER_CELL:
@@ -980,18 +1014,32 @@ class Navigation:
         that case the long press goes straight to the history view."""
         return {o.data["target"] for o in options} <= {"toggle", "history"}
 
+    @staticmethod
+    def _opens_controls(entity: DeviceEntity) -> bool:
+        """Entities that open a combined control view directly on long press
+        (rather than the button-menu used by lights/locks)."""
+        return (entity.is_media_player or entity.is_alarm or entity.is_climate
+                or entity.is_timer or entity.domain == "cover"
+                or (entity.domain == "fan" and entity.supports_fan_speed))
+
     def _open_entity_menu(self, entity: DeviceEntity) -> None:
-        """Open the long-press options menu — or, when the only options are
-        Toggle/History, go straight to the history view (single press toggles).
-        A media player opens its controls (Now Playing) directly."""
+        """Open the long press view. Most controllable types open a combined
+        control view directly; lights/locks open the button-menu; entities whose
+        only options are Toggle/History go straight to history (single press
+        still toggles)."""
         if entity.is_media_player:
             self._push(Frame(FrameKind.MEDIA, entity=entity))
-            return
-        if entity.is_alarm:
+        elif entity.is_alarm:
             self._push(Frame(FrameKind.ALARM, entity=entity))
-            return
-        options = self._entity_menu_options(entity)
-        if self._menu_is_history_only(options):
+        elif entity.is_climate:
+            self._open_climate_detail(entity)
+        elif entity.is_timer:
+            self._open_timer(entity)
+        elif entity.domain == "cover":
+            self._push(Frame(FrameKind.COVER_ACTIONS, entity=entity))
+        elif entity.domain == "fan" and entity.supports_fan_speed:
+            self._push(Frame(FrameKind.FAN, entity=entity))
+        elif self._menu_is_history_only(self._entity_menu_options(entity)):
             self._open_history(entity)
         else:
             self._push(Frame(FrameKind.ENTITY_MENU, entity=entity))
@@ -999,7 +1047,7 @@ class Navigation:
     def _dispatch_menu_target(self, entity: DeviceEntity, target: str | None) -> None:
         """Act on a chosen menu option: open a sub-view or fire an action."""
         if target == "toggle":
-            self._invoke(entity)  # same as a single press; stays in the menu (tile updates live)
+            self._invoke(entity)  # same as a single press; stays in the view (tile updates live)
         elif target == "history":
             self._open_history(entity)
         elif target == "brightness":
@@ -1008,20 +1056,8 @@ class Navigation:
             self._push(Frame(FrameKind.PICKER, entity=entity, data={"type": "color"}))
         elif target == "temperature":
             self._push(Frame(FrameKind.PICKER, entity=entity, data={"type": "temperature"}))
-        elif target == "fan_speed":
-            # Presets when the fan exposes them, else a percentage scale.
-            if entity.preset_modes:
-                self._push(Frame(FrameKind.PRESETS, entity=entity))
-            else:
-                self._push(Frame(FrameKind.PICKER, entity=entity, data={"type": "fan_percentage"}))
-        elif target == "climate_temp":
-            self._open_climate_detail(entity)
-        elif target == "presets":
-            self._push(Frame(FrameKind.PRESETS, entity=entity))
-        elif target == "timer":
-            self._open_timer(entity)
-        elif target == "cover":
-            self._push(Frame(FrameKind.COVER_ACTIONS, entity=entity))
+        elif target == "fan_speed":  # only reached for a fan with no presets
+            self._push(Frame(FrameKind.PICKER, entity=entity, data={"type": "fan_percentage"}))
         elif target == "position":
             self._push(Frame(FrameKind.PICKER, entity=entity, data={"type": "cover_position"}))
         elif target == "lock_open":
@@ -1150,8 +1186,8 @@ class Navigation:
             # Detail views that reflect live state rebuild when their entity
             # changes (timer remaining, target temp, active preset, toggle state).
             viewing_detail = (
-                frame.kind in (FrameKind.TIMER, FrameKind.CLIMATE_DETAIL, FrameKind.PRESETS,
-                               FrameKind.ENTITY_MENU, FrameKind.MEDIA, FrameKind.ALARM)
+                frame.kind in (FrameKind.TIMER, FrameKind.CLIMATE_DETAIL, FrameKind.ENTITY_MENU,
+                               FrameKind.MEDIA, FrameKind.ALARM, FrameKind.FAN)
                 and frame.entity is not None
                 and frame.entity.entity_id == entity_id
             )
@@ -1175,11 +1211,12 @@ class Navigation:
                     return
 
     def tick(self) -> None:
-        """Re-render visible **active** timers so they count down live.
+        """Re-render live tiles (active timers, and the home clock/date).
 
-        Called ~once a second by a background ticker. Only active timers on the
-        current view are redrawn (their remaining time is recomputed at render);
-        a no-op when nothing is counting down.
+        Called ~once a second by a background ticker. Active timers on the
+        current view count down; the home-screen clock/date tiles are redrawn
+        only when their displayed text actually changes (so idle minutes cost no
+        USB writes). A no-op when nothing needs updating.
         """
         with self._lock:
             if self._disconnected:
@@ -1197,6 +1234,19 @@ class Navigation:
                     for key, action in self.key_map.items():
                         if action.kind is ActionKind.TIMER_STATUS:
                             self.display.set_image(key, self.renderer.timer_status(entity))
+            elif frame.kind is FrameKind.HOME:
+                self._tick_clock()
+
+    def _tick_clock(self) -> None:
+        """Redraw the home clock/date tiles when their text has changed."""
+        now = datetime.now(self.tz)
+        clock, date = now.strftime("%H:%M"), now.strftime("%a %b %d")
+        for key, action in self.key_map.items():
+            if action.kind is ActionKind.CLOCK and clock != self._clock_shown:
+                self.display.set_image(key, self.renderer.clock_tile(now))
+            elif action.kind is ActionKind.DATE and date != self._date_shown:
+                self.display.set_image(key, self.renderer.date_tile(now))
+        self._clock_shown, self._date_shown = clock, date
 
     def set_connected(self, connected: bool) -> None:
         with self._lock:

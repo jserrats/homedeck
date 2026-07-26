@@ -42,25 +42,17 @@ def test_fan_and_cover_capability_flags():
 
 # -- menus per type -----------------------------------------------------------
 
-def test_fan_menu_has_toggle_speed_then_history():
-    fan = DeviceEntity("fan.a", "A", "fan", "on", attributes={"preset_modes": ["low", "high"]})
-    assert _menu_targets(fan) == ["toggle", "fan_speed", "history"]
+def _view(entity, kind):
+    nav, _ = _nav(entity)
+    nav.stack = [Frame(FrameKind.HOME), Frame(kind, entity=entity)]
+    return nav._build_key_map()
 
 
 def test_plain_fan_has_toggle_and_history():
+    # a fan with no speed control doesn't reach the FAN view; its button-menu
+    # (Toggle + History) is history-only, so a long press goes straight to History.
     fan = DeviceEntity("fan.c", "C", "fan", "on", attributes={})
     assert _menu_targets(fan) == ["toggle", "history"]
-
-
-def test_cover_menu_toggle_controls_position_history():
-    cover = DeviceEntity("cover.a", "A", "cover", "open",
-                         attributes={"supported_features": 15, "current_position": 30})
-    assert _menu_targets(cover) == ["toggle", "cover", "position", "history"]
-
-
-def test_basic_cover_menu_has_no_position():
-    cover = DeviceEntity("cover.b", "B", "cover", "open", attributes={"supported_features": 3})
-    assert _menu_targets(cover) == ["toggle", "cover", "history"]
 
 
 def test_sensor_menu_is_history_only():
@@ -69,31 +61,63 @@ def test_sensor_menu_is_history_only():
     assert _menu_targets(sensor) == ["history"]
 
 
-# -- fan speed: presets vs percentage -----------------------------------------
+# -- fan / cover open a combined control view directly ------------------------
 
-def test_fan_speed_opens_presets_when_available():
-    fan = DeviceEntity("fan.a", "A", "fan", "on", attributes={"preset_modes": ["low", "high"], "preset_mode": "low"})
+def test_long_press_fan_opens_fan_view():
+    fan = DeviceEntity("fan.a", "A", "fan", "on", attributes={"preset_modes": ["low", "high"]})
     nav, _ = _nav(fan)
-    nav._dispatch_menu_target(fan, "fan_speed")
-    assert nav.stack[-1].kind is FrameKind.PRESETS
-    view = nav._build_key_map()
+    nav._open_entity_menu(fan)
+    assert nav.stack[-1].kind is FrameKind.FAN
+
+
+def test_long_press_cover_opens_cover_view():
+    cover = DeviceEntity("cover.a", "A", "cover", "open", attributes={"supported_features": 15})
+    nav, _ = _nav(cover)
+    nav._open_entity_menu(cover)
+    assert nav.stack[-1].kind is FrameKind.COVER_ACTIONS
+
+
+def test_fan_view_shows_toggle_presets_and_history():
+    fan = DeviceEntity("fan.a", "A", "fan", "on", attributes={"preset_modes": ["low", "high"], "preset_mode": "low"})
+    view = _view(fan, FrameKind.FAN)
+    assert view[0].kind is ActionKind.BACK
+    assert view[1].kind is ActionKind.MENU_ITEM and view[1].data["target"] == "toggle"
     presets = [a for a in view.values() if a.kind is ActionKind.SERVICE_BUTTON]
     assert [a.data["call"] for a in presets] == [
         ("fan", "set_preset_mode", "fan.a", {"preset_mode": "low"}),
         ("fan", "set_preset_mode", "fan.a", {"preset_mode": "high"}),
     ]
-    assert view[1].kind is ActionKind.SERVICE_BUTTON  # no status tile for a fan (not climate)
+    assert any(a.kind is ActionKind.MENU_ITEM and a.data["target"] == "history" for a in view.values())
 
 
-def test_fan_speed_opens_percentage_picker_without_presets():
+def test_fan_view_without_presets_uses_a_speed_picker_button():
     fan = DeviceEntity("fan.b", "B", "fan", "on", attributes={"supported_features": 1, "percentage": 40})
+    view = _view(fan, FrameKind.FAN)
+    targets = [a.data["target"] for a in view.values() if a.kind is ActionKind.MENU_ITEM]
+    assert targets == ["toggle", "fan_speed", "history"]
+    # the Speed button opens the full-screen percentage picker
     nav, _ = _nav(fan)
     nav._dispatch_menu_target(fan, "fan_speed")
     assert nav.stack[-1].kind is FrameKind.PICKER
     cells = [a for k, a in sorted(nav._build_key_map().items()) if a.kind is ActionKind.PICKER_CELL]
     assert all(a.data["call"][0:2] == ("fan", "set_percentage") for a in cells)
-    pcts = [a.data["call"][3]["percentage"] for a in cells]
-    assert pcts == sorted(pcts) and pcts[0] == 10 and pcts[-1] == 100
+
+
+def test_cover_view_controls_position_history():
+    cover = DeviceEntity("cover.a", "A", "cover", "open",
+                         attributes={"supported_features": 15, "current_position": 30})
+    view = _view(cover, FrameKind.COVER_ACTIONS)
+    services = [a.data["call"][1] for k, a in sorted(view.items()) if a.kind is ActionKind.SERVICE_BUTTON]
+    assert services == ["open_cover", "stop_cover", "close_cover"]
+    menu_targets = [a.data["target"] for a in view.values() if a.kind is ActionKind.MENU_ITEM]
+    assert "position" in menu_targets and "history" in menu_targets
+
+
+def test_basic_cover_view_has_no_position():
+    cover = DeviceEntity("cover.b", "B", "cover", "open", attributes={"supported_features": 3})
+    view = _view(cover, FrameKind.COVER_ACTIONS)
+    menu_targets = [a.data["target"] for a in view.values() if a.kind is ActionKind.MENU_ITEM]
+    assert "position" not in menu_targets and "history" in menu_targets
 
 
 # -- cover controls + position ------------------------------------------------
@@ -127,7 +151,9 @@ def test_cover_action_button_fires_and_stays():
     nav.on_service = calls.append
     nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.COVER_ACTIONS, entity=cover)]
     nav.key_map = nav._build_key_map()
-    nav.handle_press(1, True)  # Open
+    open_key = next(k for k, a in nav.key_map.items()
+                    if a.kind is ActionKind.SERVICE_BUTTON and a.data["call"][1] == "open_cover")
+    nav.handle_press(open_key, True)
     assert calls == [("cover", "open_cover", "cover.a", {})]
     assert nav.stack[-1].kind is FrameKind.COVER_ACTIONS  # controls stay open
 
@@ -159,10 +185,11 @@ def test_sensor_long_press_history_short_press_noop(monkeypatch):
 
 
 @requires_assets
-def test_menu_and_presets_render():
+def test_fan_and_cover_views_render():
     fan = DeviceEntity("fan.a", "A", "fan", "on", attributes={"preset_modes": ["low", "high"], "preset_mode": "low"})
+    cover = DeviceEntity("cover.a", "A", "cover", "open", attributes={"supported_features": 15, "current_position": 30})
     nav, _ = _nav(fan)
-    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.ENTITY_MENU, entity=fan)]
+    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.FAN, entity=fan)]
     nav.render()
-    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.PRESETS, entity=fan)]
+    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.COVER_ACTIONS, entity=cover)]
     nav.render()  # both render without error

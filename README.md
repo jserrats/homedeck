@@ -5,26 +5,26 @@ Control [Home Assistant](https://www.home-assistant.io/) from an **Elgato Stream
 Each Home Assistant **Area** becomes a folder on the deck. Open a room and its keys are
 auto-populated with that area's devices. A **single press** does the obvious thing (toggle a
 light/switch/fan/cover, lock/unlock a lock, fire a button, pause/resume a timer, turn a
-thermostat on/off, play/pause a media player, arm/disarm an alarm), and a **long press** (hold ≈0.5 s) opens an **options menu** for that
-entity — a tile per capability, tailored to what the entity supports. Hold and the key shows a
-blue **"Release for options"** hint so you know the long-press is armed; release to open the
-menu. Toggleable devices (lights, switches, input booleans, fans, covers) get a **Toggle** tile
-first — the same on/off action as a single press. Every entity's menu ends with **History**, and
-when History is the *only* option (plain read-only sensors, buttons…) the long press skips the
-menu and opens it directly.
+thermostat on/off, play/pause a media player, arm/disarm an alarm), and a **long press** (hold ≈0.5 s) opens the entity's
+**controls**, tailored to what it supports. Hold and the key shows a blue **"Release for
+controls"** hint so you know the long-press is armed. Most controllable types open a **combined
+control view** where every control sits on the first screen alongside a single **History** tile
+(that opens the full-screen timeline when pressed). Lights are the exception — their pickers each
+need the whole screen — so they open a small **menu of buttons** instead; read-only entities
+(sensors, buttons…) skip straight to History.
 
-- **Lights** — the menu offers **Brightness**, **Color** and **Warmth** (only those the light
-  supports). Each opens a full-deck picker: a brightness scale (10→100%) in the light's current
-  color, a **color wheel** of hues, or **color temperature across the light's full range**. Tap
-  a swatch to apply it and close.
-- **Fans** — a **Speed** option: **preset-mode** buttons (low/medium/high…) when the fan
-  exposes them, otherwise a **percentage** scale.
-- **Thermostats** (`climate`) — a **Temperature** option (status, **− / +** whole-degree
-  set-point buttons, and an on/off toggle) and a **Presets** option (one button per HA preset
-  mode — eco, comfort, away… — with the active one highlighted).
-- **Covers** — a **Controls** option (**Open / Stop / Close**) and, when the cover supports
-  positioning, a **Position** option (a 0→100% scale via `cover.set_cover_position`).
-- **Locks** — an **Open Door** option (`lock.open`). The padlock icon is **green** when locked,
+- **Lights** — a menu with **Brightness**, **Color** and **Warmth** (only those the light
+  supports), plus **Toggle**. Each opens a full-deck picker: a brightness scale (10→100%) in the
+  light's current color, a **color wheel** of hues, or **color temperature across the light's full
+  range**. Tap a swatch to apply it and close.
+- **Fans** — a control view with **Toggle**, the **speed presets** (low/medium/high…) inline, or
+  a **Speed** button opening a **percentage** scale when the fan has no presets.
+- **Thermostats** (`climate`) — one control view: current status, **− / +** whole-degree set-point
+  buttons, an on/off toggle, and one button per HA **preset mode** (eco, comfort, away…) with the
+  active one highlighted — all together.
+- **Covers** — a control view with **Open / Stop / Close** and, when the cover supports
+  positioning, a **Position** button (a 0→100% scale via `cover.set_cover_position`).
+- **Locks** — a menu with an **Open Door** option (`lock.open`). The padlock icon is **green** when locked,
   **grey** when unlocked, a **yellow clock** while locking/unlocking, and a **red alert** when
   jammed.
 - **Alarm panels** (`alarm_control_panel`) — a single press **arms** (preferred mode) when
@@ -33,8 +33,8 @@ menu and opens it directly.
   with the active one highlighted, plus History. The shield icon is **green** when armed, **grey**
   when disarmed, **yellow** while arming, and **orange** when triggered. (Panels that require a
   code to arm/disarm need it entered in Home Assistant — the deck has no keypad.)
-- **Timers** — the key shows the remaining time; the menu's **Controls** option opens a detail
-  view with the remaining time and **Pause/Resume, Cancel and Finish** buttons.
+- **Timers** — the key shows the remaining time; a long press opens a control view with the
+  remaining time and **Pause/Resume, Cancel and Finish** buttons.
 - **Media players** — a single press **play/pauses**. The key's icon is the **album art of what's
   playing** (fetched from Home Assistant, with a play/pause badge and the title); it falls back to
   the entity's Home Assistant icon (by `device_class`) when there's no artwork. A **long press**
@@ -85,6 +85,10 @@ above. The band has a slightly lighter background so it reads as a distinct zone
   `weather.*` entity; press it for a **fullscreen forecast** that fills the grid — **one column
   per day**, with rows for the weekday, condition icon, min and max temperature. Set
   `HOMEDECK_WEATHER_ENTITY` to choose which weather entity (defaults to the first one found).
+- A **Clock** tile (local time, `HH:MM`) and a **Date** tile (weekday + month/day). Both are
+  non-interactive and **update live** — the clock each minute, the date each day — using Home
+  Assistant's timezone (or the container `TZ`). They redraw only when the displayed text changes,
+  so idle minutes cost no USB traffic.
 - A **Settings** folder (always pinned last) for deck settings:
   - **Reload** — re-fetches areas/entities/floors/weather from Home Assistant so newly added or
     changed entities show up without restarting the service.

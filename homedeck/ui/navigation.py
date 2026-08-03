@@ -163,6 +163,7 @@ class Navigation:
         weather: Weather | None = None,
         calendars: list[Calendar] | None = None,
         on_calendar_events: Callable[[list[str], int], dict[str, list[dict]]] | None = None,
+        agenda_days: int = AGENDA_DAYS,
         on_forecast: Callable[[str], list[dict]] | None = None,
         on_logbook: Callable[[str], list[dict]] | None = None,
         on_reload: Callable[[], None] | None = None,
@@ -178,6 +179,7 @@ class Navigation:
         self.weather = weather
         self.calendars = calendars or []
         self.on_calendar_events = on_calendar_events
+        self.agenda_days = max(1, agenda_days)  # days of agenda to fetch and lay out
         self.on_forecast = on_forecast
         self.on_logbook = on_logbook
         self.on_reload = on_reload
@@ -803,7 +805,7 @@ class Navigation:
         Every day of the window gets a column, empty or not, so the days stay in
         the same place and the grid reads as a week.
         """
-        days = group_by_day(frame.events or [], datetime.now(self.tz), self.tz, span=AGENDA_DAYS)
+        days = group_by_day(frame.events or [], datetime.now(self.tz), self.tz, span=self.agenda_days)
         cols = getattr(self.display, "cols", 0)
         if not cols:  # no grid info: flat sequential, days still contiguous
             flat = [Action(ActionKind.CALENDAR_EVENT, event=e, data={"today": i == 0})
@@ -1213,7 +1215,7 @@ class Navigation:
         raw: dict[str, list[dict]] = {}
         if self.on_calendar_events is not None and active:
             try:
-                raw = self.on_calendar_events([c.entity_id for c in active], AGENDA_DAYS) or {}
+                raw = self.on_calendar_events([c.entity_id for c in active], self.agenda_days) or {}
             except Exception as exc:  # noqa: BLE001 - the agenda is best-effort
                 logger.warning("Calendar events fetch failed: %s", exc)
         names = {c.entity_id: c.name for c in self.calendars}

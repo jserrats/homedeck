@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from .ha.calendar import AGENDA_DAYS
+
 
 @dataclass(frozen=True)
 class Config:
@@ -17,6 +19,7 @@ class Config:
     occupancy_entity: str | None
     timezone: str | None
     rotation: int
+    agenda_days: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -54,10 +57,14 @@ class Config:
         timezone = (os.environ.get("HOMEDECK_TZ") or os.environ.get("TZ") or "Europe/Madrid").strip()
         rotation = _clamp_int(os.environ.get("HOMEDECK_ROTATION"), default=0, lo=0, hi=270)
         rotation = (rotation // 90) * 90  # normalize to 0/90/180/270
+        # How far ahead the calendar agenda looks. Every day in the window gets a
+        # column, so a longer horizon means more pages to step through.
+        agenda_days = _clamp_int(os.environ.get("HOMEDECK_AGENDA_DAYS"),
+                                 default=AGENDA_DAYS, lo=1, hi=60)
         return cls(
             ha_url=ha_url, ha_token=ha_token, brightness=brightness,
             weather_entity=weather_entity, occupancy_entity=occupancy_entity,
-            timezone=timezone, rotation=rotation,
+            timezone=timezone, rotation=rotation, agenda_days=agenda_days,
         )
 
 

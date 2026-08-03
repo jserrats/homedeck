@@ -17,8 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 
-# How far ahead the agenda view looks.
-AGENDA_DAYS = 7
+# Default horizon for the agenda view, in days (HOMEDECK_AGENDA_DAYS overrides it).
+AGENDA_DAYS = 14
 
 
 @dataclass

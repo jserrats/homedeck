@@ -24,6 +24,8 @@ from typing import Callable, TypeVar
 from homeassistant_api import WebsocketClient
 from homeassistant_api.errors import RequestError
 
+from .calendar import AGENDA_DAYS
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -147,7 +149,8 @@ class HaClient:
         forecast = (entry or {}).get("forecast", [])
         return forecast if isinstance(forecast, list) else []
 
-    def get_calendar_events(self, entity_ids: list[str], days: int = 7) -> dict[str, list[dict]]:
+    def get_calendar_events(self, entity_ids: list[str],
+                            days: int = AGENDA_DAYS) -> dict[str, list[dict]]:
         """Upcoming events per calendar via ``calendar.get_events``.
 
         Returns {entity_id: [event, ...]}, or {} if the call isn't supported.

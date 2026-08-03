@@ -87,10 +87,12 @@ above. The band has a slightly lighter background so it reads as a distinct zone
   `HOMEDECK_WEATHER_ENTITY` to choose which weather entity (defaults to the first one found).
 - A **Calendars** tile showing the **current or next event** across your `calendar.*` entities —
   when it starts (`18:00` today, `Tue 09:30` later, `All day`) over the event's title, switching
-  to the next one as each event ends. Press it for a **fullscreen agenda** of the next week —
-  **one column per day**, headed by the weekday and date, with that day's events stacked
-  underneath in time order. **Every day gets a column**, free days included, so the week always
-  reads the same way (a busy day spills into the next column, repeating its header).
+  to the next one as each event ends. Press it for a **fullscreen agenda** of the **next two
+  weeks** — **one column per day**, headed by the weekday and date, with that day's events
+  stacked underneath in time order. **Every day gets a column**, free days included, so the days
+  always sit in the same place (a busy day spills into the next column, repeating its header).
+  Seven days fit per page on an XL, so a fortnight is two pages; set `HOMEDECK_AGENDA_DAYS`
+  (1–60) to look further ahead or keep it to a single page.
   Today's column also shows a **countdown** (`Now`, `in 25m`); later days don't need one. **Hold
   it** to pick **which calendars count** — any number can be on at once, and the choice
   **persists** to the state file. Until you pick, **all** calendars are used. The tile only

@@ -7,6 +7,7 @@ from homedeck.deck import icons
 from homedeck.deck.renderer import KeyRenderer
 from homedeck.export import ExportDisplay
 from homedeck.ha.calendar import (
+    AGENDA_DAYS,
     Calendar,
     CalendarDay,
     CalendarEvent,
@@ -216,11 +217,13 @@ def test_events_from_calendars_is_the_agenda_fallback():
 # -- navigation ---------------------------------------------------------------
 
 
-def _nav(calendars=None, on_calendar_events=None, monkeypatch=None, cols=8):
+def _nav(calendars=None, on_calendar_events=None, monkeypatch=None, cols=8, agenda_days=None):
     room = Room("living", "Living", entities=[DeviceEntity("light.l", "L", "light", "on")])
     display = ExportDisplay(cols=cols) if cols != 8 else ExportDisplay()
+    extra = {} if agenda_days is None else {"agenda_days": agenda_days}
     nav = Navigation(display, KeyRenderer(display.key_size), [room], on_service=lambda c: None,
-                     calendars=calendars or [], on_calendar_events=on_calendar_events, tz=TZ)
+                     calendars=calendars or [], on_calendar_events=on_calendar_events, tz=TZ,
+                     **extra)
     if monkeypatch is not None:
         _freeze(nav, monkeypatch)
     nav.key_map = nav._build_key_map()
@@ -276,7 +279,7 @@ def test_short_press_opens_the_agenda_with_only_enabled_calendars(monkeypatch):
     clock["t"] += 0.1
     nav.handle_press(key, False)
 
-    assert asked == [(["calendar.personal", "calendar.work"], 7)]
+    assert asked == [(["calendar.personal", "calendar.work"], AGENDA_DAYS)]
     assert nav.stack[-1].kind is FrameKind.CALENDAR
     assert [e.summary for e in nav.stack[-1].events] == ["Dentist"]
     assert any(a.kind is ActionKind.CALENDAR_EVENT for a in nav.key_map.values())
@@ -495,6 +498,39 @@ def test_day_headers_are_not_interactive(monkeypatch):
     nav.handle_press(key, True)
     nav.handle_press(key, False)
     assert len(nav.stack) == depth
+
+
+def test_the_agenda_horizon_defaults_to_two_weeks():
+    assert AGENDA_DAYS == 14
+
+
+def test_a_configured_horizon_drives_both_the_fetch_and_the_columns(monkeypatch):
+    asked = []
+
+    def on_events(entity_ids, days):
+        asked.append(days)
+        return {}
+
+    nav = _nav(_two_calendars(), on_calendar_events=on_events, monkeypatch=monkeypatch,
+               agenda_days=3)
+    nav._open_calendar()
+    assert asked == [3]
+    headers = [a.data["date"] for k, a in sorted(nav.key_map.items())
+               if a.kind is ActionKind.CALENDAR_DAY]
+    assert headers == ["Aug 03", "Aug 04", "Aug 05"]
+
+
+def test_a_horizon_longer_than_the_deck_paginates(monkeypatch):
+    nav = _nav(_two_calendars(), on_calendar_events=lambda ids, days: {},
+               monkeypatch=monkeypatch, agenda_days=14)
+    nav._open_calendar()
+    first = [a.data["date"] for k, a in sorted(nav.key_map.items())
+             if a.kind is ActionKind.CALENDAR_DAY]
+    assert first == ["Aug 03", "Aug 04", "Aug 05", "Aug 06", "Aug 07", "Aug 08", "Aug 09"]
+    nav._change_page(1)
+    second = [a.data["date"] for k, a in sorted(nav.key_map.items())
+              if a.kind is ActionKind.CALENDAR_DAY]
+    assert second == ["Aug 10", "Aug 11", "Aug 12", "Aug 13", "Aug 14", "Aug 15", "Aug 16"]
 
 
 def test_an_empty_agenda_still_shows_the_week(monkeypatch):

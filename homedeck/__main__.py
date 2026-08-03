@@ -126,7 +126,7 @@ def run_export(config: Config, out_dir: str) -> int:
     navigation = Navigation(
         display, renderer, rooms, on_service=lambda _e: None,
         floors=floors, unassigned_rooms=unassigned, weather=weather,
-        calendars=calendars, tz=tz,
+        calendars=calendars, agenda_days=config.agenda_days, tz=tz,
     )
     written = export_views(rooms, navigation, display, out_dir)
     for path in written:
@@ -172,6 +172,7 @@ def run_deck(config: Config) -> int:
         floors=floors, unassigned_rooms=unassigned,
         weather=weather, on_forecast=client.get_forecast,
         calendars=calendars, on_calendar_events=client.get_calendar_events,
+        agenda_days=config.agenda_days,
         on_logbook=client.get_logbook, on_reload=reload_model,
         on_rotate=deck.cycle_rotation, on_brightness=deck.cycle_brightness,
         on_media_image=client.get_media_image,

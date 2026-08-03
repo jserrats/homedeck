@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from . import icons
 from ..color import hs_to_rgb, kelvin_to_rgb, scale
+from ..ha.calendar import CalendarEvent
 from ..ha.history import HistoryEvent
 from ..ha.model import BUTTON_DOMAINS, CLIMATE_DOMAINS, DeviceEntity, Floor, Room, Status, _format_number
 from ..ha.weather import ForecastDay, Weather
@@ -41,6 +42,8 @@ LIGHTS_ACCENT = (255, 176, 0)    # "Lights On" folder
 SECURITY_ACCENT = (168, 85, 247)  # "Security" folder (purple)
 CLIMATE_ACCENT = (45, 212, 191)   # "Climate" folder (teal)
 WEATHER_ACCENT = (125, 200, 247)  # weather button / forecast (sky blue)
+CALENDAR_ACCENT = (244, 143, 177)  # calendar tile / agenda (soft pink)
+CALENDAR_HEADER_BG = (56, 28, 38)  # agenda day-column header (dark plum)
 SETTINGS_ACCENT = (156, 163, 175)  # "Settings" folder (slate grey)
 CLIMATE_ICON = (125, 200, 247)    # active fan / climate icon (sky blue)
 NAV_COLOR = (210, 210, 214)
@@ -353,6 +356,56 @@ class KeyRenderer:
                   font=self._value_font(int(self.h * 0.26)), fill=TEXT, anchor="mm")
         return img
 
+    def calendar_button(self, event: CalendarEvent | None,
+                        bg: tuple[int, int, int] = RESERVED_BG) -> Image.Image:
+        """Home-screen calendar tile: when the next event starts, over its title."""
+        img = Image.new("RGB", (self.w, self.h), bg)
+        draw = ImageDraw.Draw(img)
+        if event is None:
+            self._draw_glyph(draw, icons.glyph("calendar-blank"), size=int(self.h * 0.34),
+                             cy=int(self.h * 0.34), color=CALENDAR_ACCENT)
+            self._draw_label(draw, "No events", y=int(self.h * 0.62), size=11,
+                             color=NAV_COLOR, max_lines=1)
+            return img
+        self._draw_label(draw, event.time_label, y=int(self.h * 0.06), size=12,
+                         color=CALENDAR_ACCENT, max_lines=1)
+        self._draw_label(draw, event.summary, y=int(self.h * 0.30), size=12, color=TEXT, max_lines=3)
+        return img
+
+    def calendar_day_header(self, label: str, date_label: str) -> Image.Image:
+        """Column header in the agenda: the weekday over its date."""
+        img = Image.new("RGB", (self.w, self.h), CALENDAR_HEADER_BG)
+        draw = ImageDraw.Draw(img)
+        draw.text((self.w / 2, self.h * 0.36), label or "—",
+                  font=self._value_font(int(self.h * 0.30)), fill=CALENDAR_ACCENT, anchor="mm")
+        self._draw_label(draw, date_label, y=int(self.h * 0.60), size=13, color=TEXT, max_lines=1)
+        return img
+
+    def calendar_event(self, event: CalendarEvent | None,
+                       show_relative: bool = True) -> Image.Image:
+        """An agenda tile: start time, title, and the calendar it came from.
+
+        ``show_relative`` adds the countdown ("Now", "in 25m"); it's dropped for
+        days other than today, where the column header already says which day it
+        is and the room is better spent on the title.
+        """
+        if event is None:
+            return self.calendar_button(None, bg=BG)  # empty agenda placeholder
+        img, draw = self._canvas()
+        self._draw_label(draw, event.clock or event.time_label, y=int(self.h * 0.04), size=12,
+                         color=CALENDAR_ACCENT, max_lines=1)
+        if show_relative:
+            self._draw_label(draw, event.rel_label, y=int(self.h * 0.24), size=10,
+                             color=NAV_COLOR, max_lines=1)
+            self._draw_label(draw, event.summary, y=int(self.h * 0.44), size=12,
+                             color=TEXT, max_lines=2)
+        else:
+            self._draw_label(draw, event.summary, y=int(self.h * 0.28), size=12,
+                             color=TEXT, max_lines=3)
+        self._draw_label(draw, event.calendar, y=int(self.h * 0.80), size=10,
+                         color=(190, 190, 195), max_lines=1)
+        return img
+
     def weather_day(self, day: ForecastDay) -> Image.Image:
         """Compact forecast tile (small-deck fallback): weekday, icon, high/low."""
         img, draw = self._canvas()
@@ -567,11 +620,11 @@ def _wrap(text: str, font: ImageFont.FreeTypeFont, max_width: int, max_lines: in
     if len(lines) < max_lines:
         lines.append(current)
 
-    # Truncate any remaining overflow on the final line.
-    if len(lines) == max_lines:
-        last = lines[-1]
-        if font.getlength(last) > max_width:
-            while last and font.getlength(last + "…") > max_width:
-                last = last[:-1]
-            lines[-1] = (last + "…") if last else "…"
+    # Truncate any remaining overflow on the final line. This also catches a
+    # single unbreakable word (e.g. an email-style name) that never wrapped.
+    last = lines[-1]
+    if font.getlength(last) > max_width:
+        while last and font.getlength(last + "…") > max_width:
+            last = last[:-1]
+        lines[-1] = (last + "…") if last else "…"
     return lines[:max_lines]

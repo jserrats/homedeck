@@ -85,6 +85,17 @@ above. The band has a slightly lighter background so it reads as a distinct zone
   `weather.*` entity; press it for a **fullscreen forecast** that fills the grid — **one column
   per day**, with rows for the weekday, condition icon, min and max temperature. Set
   `HOMEDECK_WEATHER_ENTITY` to choose which weather entity (defaults to the first one found).
+- A **Calendars** tile showing the **current or next event** across your `calendar.*` entities —
+  when it starts (`18:00` today, `Tue 09:30` later, `All day`) over the event's title, switching
+  to the next one as each event ends. Press it for a **fullscreen agenda** of the next week —
+  **one column per day**, headed by the weekday and date, with that day's events stacked
+  underneath in time order. **Every day gets a column**, free days included, so the week always
+  reads the same way (a busy day spills into the next column, repeating its header).
+  Today's column also shows a **countdown** (`Now`, `in 25m`); later days don't need one. **Hold
+  it** to pick **which calendars count** — any number can be on at once, and the choice
+  **persists** to the state file. Until you pick, **all** calendars are used. The tile only
+  appears when Home Assistant has at least one calendar entity, and it **updates live** as
+  events change.
 - A **Clock** tile (local time, `HH:MM`) and a **Date** tile (weekday + month/day). Both are
   non-interactive and **update live** — the clock each minute, the date each day — using Home
   Assistant's timezone (or the container `TZ`). They redraw only when the displayed text changes,
@@ -95,6 +106,9 @@ above. The band has a slightly lighter background so it reads as a distinct zone
   - **Rotate** — cycles the display through 0°/90°/180°/270°, so you can mount the deck in
     **landscape or portrait** in any orientation. It remaps keys and rotates each key image, and
     the choice persists (see `HOMEDECK_ROTATION` / state file below).
+  - **Brightness** — cycles the deck backlight through **20 → 40 → 60 → 80 → 100%**; the tile
+    shows the current level and the choice **persists** to the state file (so it survives
+    restarts). `HOMEDECK_BRIGHTNESS` sets the initial default.
 
 Rooms are discovered automatically from HA areas; device→room mapping uses the entity registry
 with a device-registry fallback. Entities hidden in HA (the *Visible* toggle) and
@@ -255,6 +269,7 @@ journalctl -u homedeck -f          # logs
 | `homedeck/config.py` | Env/`.env` config |
 | `homedeck/ha/client.py` | WebSocket client (commands + event listener) |
 | `homedeck/ha/model.py` | Rooms/devices, area resolution, state→color/value logic |
+| `homedeck/ha/calendar.py` | Calendar entities + event parsing/labelling |
 | `homedeck/deck/icons.py` | MDI icon lookup + per-domain defaults |
 | `homedeck/deck/renderer.py` | Key image rendering (Pillow) |
 | `homedeck/deck/controller.py` | Stream Deck hardware control |

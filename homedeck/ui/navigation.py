@@ -28,8 +28,19 @@ from typing import Callable
 
 from PIL import Image
 
+from .. import state
 from ..deck import renderer as renderer_mod
 from ..deck.renderer import KeyRenderer
+from ..ha.calendar import (
+    AGENDA_DAYS,
+    Calendar,
+    CalendarDay,
+    CalendarEvent,
+    events_from_calendars,
+    group_by_day,
+    next_event,
+    parse_events,
+)
 from ..ha.history import HistoryEvent, parse_logbook
 from ..ha.model import DeviceEntity, Floor, Room, Status
 from ..ha.weather import ForecastDay, Weather, parse_forecast
@@ -59,6 +70,8 @@ class FrameKind(Enum):
     ALARM = auto()          # alarm panel: disarm / arm modes
     CLIMATE_DETAIL = auto()  # thermostat: temperature + presets
     WEATHER = auto()
+    CALENDAR = auto()         # agenda: upcoming events across the chosen calendars
+    CALENDAR_PICKER = auto()  # multi-select: which calendars feed the tile
     HISTORY = auto()
     TIMER = auto()
     SETTINGS = auto()
@@ -72,6 +85,7 @@ class Frame:
     entity: DeviceEntity | None = None  # entity a menu/picker/detail view acts on
     forecast: list[ForecastDay] | None = None  # days shown in a WEATHER frame
     history: list[HistoryEvent] | None = None  # events shown in a HISTORY frame
+    events: list[CalendarEvent] | None = None  # events shown in a CALENDAR frame
     data: dict | None = None  # PICKER: {"type": "brightness"|"color"|...}
 
 
@@ -80,6 +94,7 @@ class ActionKind(Enum):
     OPEN_SECURITY = auto()
     OPEN_CLIMATE = auto()
     OPEN_WEATHER = auto()
+    OPEN_CALENDAR = auto()   # calendar tile: press for the agenda, hold to pick calendars
     OPEN_SETTINGS = auto()
     CLOCK = auto()          # live local-time tile (non-interactive)
     DATE = auto()           # live date + weekday tile (non-interactive)
@@ -94,6 +109,9 @@ class ActionKind(Enum):
     WEATHER_CELL = auto()  # one cell of the full-matrix forecast (day/icon/min/max)
     HISTORY_TITLE = auto() # header of the history view (entity name)
     HISTORY_EVENT = auto() # one timeline entry in the history view
+    CALENDAR_DAY = auto()     # agenda column header: weekday + date (non-interactive)
+    CALENDAR_EVENT = auto()   # one entry in the agenda view (non-interactive)
+    CALENDAR_TOGGLE = auto()  # a calendar in the picker (tap toggles it on/off)
     TIMER_STATUS = auto()  # remaining-time display in the timer detail view
     TIMER_ACTION = auto()  # pause/resume/cancel/finish button
     CLIMATE_STATUS = auto()  # target/current-temp display in the thermostat view
@@ -118,7 +136,7 @@ class Action:
     delta: int = 0
     data: dict | None = None  # PICKER_CELL: {"call":.., "render":..}; MENU_ITEM/SERVICE_BUTTON payloads
     day: ForecastDay | None = None  # WEATHER_DAY tile
-    event: HistoryEvent | None = None  # HISTORY_EVENT tile
+    event: HistoryEvent | CalendarEvent | None = None  # HISTORY_EVENT / CALENDAR_EVENT tile
 
 
 class Display:
@@ -143,10 +161,13 @@ class Navigation:
         floors: list[Floor] | None = None,
         unassigned_rooms: list[Room] | None = None,
         weather: Weather | None = None,
+        calendars: list[Calendar] | None = None,
+        on_calendar_events: Callable[[list[str], int], dict[str, list[dict]]] | None = None,
         on_forecast: Callable[[str], list[dict]] | None = None,
         on_logbook: Callable[[str], list[dict]] | None = None,
         on_reload: Callable[[], None] | None = None,
         on_rotate: Callable[[], None] | None = None,
+        on_brightness: Callable[[], None] | None = None,
         on_media_image: Callable[[str], bytes | None] | None = None,
         tz: tzinfo | None = None,
     ) -> None:
@@ -155,10 +176,13 @@ class Navigation:
         self.rooms = rooms
         self.on_service = on_service
         self.weather = weather
+        self.calendars = calendars or []
+        self.on_calendar_events = on_calendar_events
         self.on_forecast = on_forecast
         self.on_logbook = on_logbook
         self.on_reload = on_reload
         self.on_rotate = on_rotate
+        self.on_brightness = on_brightness
         self.on_media_image = on_media_image  # fn(entity_picture_url) -> raw image bytes
         self.tz = tz  # HA timezone for history clock labels (None = container local)
         self._media_art: dict[str, Image.Image] = {}   # entity_picture url -> decoded art
@@ -193,6 +217,12 @@ class Navigation:
         self._disconnected = False
         self._clock_shown = ""  # last clock/date text drawn, so tick() only redraws on change
         self._date_shown = ""
+        self._calendar_shown = ""  # same, for the calendar tile's next-event text
+        # Which calendars feed the tile. None = "never chosen" -> all of them.
+        saved_calendars = state.load().get("calendars")
+        self._enabled_calendars: set[str] | None = (
+            {str(eid) for eid in saved_calendars} if isinstance(saved_calendars, list) else None
+        )
 
     # -- rendering ----------------------------------------------------------
 
@@ -220,6 +250,23 @@ class Navigation:
             return self.renderer.climate_room_reading(action.entity, action.room)
         if action.kind is ActionKind.OPEN_WEATHER:
             return self.renderer.weather_button(self.weather, bg=renderer_mod.RESERVED_BG)
+        if action.kind is ActionKind.OPEN_CALENDAR:
+            return self.renderer.calendar_button(self._next_event(), bg=renderer_mod.RESERVED_BG)
+        if action.kind is ActionKind.CALENDAR_DAY:
+            d = action.data or {}
+            return self.renderer.calendar_day_header(d.get("label", ""), d.get("date", ""))
+        if action.kind is ActionKind.CALENDAR_EVENT:
+            # The countdown is only worth a band on today's column; other columns
+            # are already labelled by their day header.
+            return self.renderer.calendar_event(
+                action.event, show_relative=bool((action.data or {}).get("today", True)))
+        if action.kind is ActionKind.CALENDAR_TOGGLE:
+            d = action.data or {}
+            active = bool(d.get("active"))
+            return self.renderer.option_button(
+                "calendar-check" if active else "calendar-blank", d["label"],
+                renderer_mod.CALENDAR_ACCENT, active=active,
+            )
         if action.kind is ActionKind.OPEN_SETTINGS:
             return self.renderer.room(action.room, accent=renderer_mod.SETTINGS_ACCENT, bg=renderer_mod.RESERVED_BG)
         if action.kind is ActionKind.CLOCK:
@@ -371,6 +418,10 @@ class Navigation:
             return self._climate_detail_key_map(frame)
         if frame.kind is FrameKind.WEATHER:
             return self._weather_key_map(frame)
+        if frame.kind is FrameKind.CALENDAR:
+            return self._calendar_key_map(frame)
+        if frame.kind is FrameKind.CALENDAR_PICKER:
+            return self._calendar_picker_key_map(frame)
         if frame.kind is FrameKind.HISTORY:
             return self._history_key_map(frame)
         if frame.kind is FrameKind.TIMER:
@@ -382,6 +433,7 @@ class Navigation:
     def _settings_key_map(self, frame: Frame) -> dict[int, Action]:
         """Deck settings: Back, then one button per setting."""
         rotation = getattr(self.display, "rotation", 0)
+        brightness = getattr(self.display, "brightness", 0)
         return {
             0: Action(ActionKind.BACK),
             1: Action(ActionKind.SETTINGS_ITEM,
@@ -390,6 +442,9 @@ class Navigation:
             2: Action(ActionKind.SETTINGS_ITEM,
                       data={"action": "rotate", "label": f"Rotate\n{rotation}°", "icon": "screen-rotation",
                             "color": renderer_mod.SETTINGS_ACCENT}),
+            3: Action(ActionKind.SETTINGS_ITEM,
+                      data={"action": "brightness", "label": f"Brightness\n{brightness}%",
+                            "icon": "brightness-6", "color": renderer_mod.ACCENT}),
         }
 
     def _history_tile(self, entity: DeviceEntity | None) -> Action:
@@ -726,6 +781,50 @@ class Navigation:
             result[1 + i] = Action(ActionKind.WEATHER_DAY, day=day)
         return result
 
+    # -- calendars ----------------------------------------------------------
+
+    def _enabled_ids(self) -> set[str]:
+        """Entity ids of the calendars feeding the tile (all of them until picked)."""
+        if self._enabled_calendars is None:
+            return {c.entity_id for c in self.calendars}
+        return set(self._enabled_calendars)
+
+    def _active_calendars(self) -> list[Calendar]:
+        enabled = self._enabled_ids()
+        return [c for c in self.calendars if c.entity_id in enabled]
+
+    def _next_event(self) -> CalendarEvent | None:
+        """The current-or-next event across the chosen calendars."""
+        return next_event(self._active_calendars(), datetime.now(self.tz), self.tz)
+
+    def _calendar_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Agenda: Back at key 0, then one column per day under its date header.
+
+        Every day of the window gets a column, empty or not, so the days stay in
+        the same place and the grid reads as a week.
+        """
+        days = group_by_day(frame.events or [], datetime.now(self.tz), self.tz, span=AGENDA_DAYS)
+        cols = getattr(self.display, "cols", 0)
+        if not cols:  # no grid info: flat sequential, days still contiguous
+            flat = [Action(ActionKind.CALENDAR_EVENT, event=e, data={"today": i == 0})
+                    for i, day in enumerate(days) for e in day.events]
+            # An empty agenda still gets one tile, so the view isn't a lone Back key.
+            fixed = {0: Action(ActionKind.BACK)}
+            return layout_page(flat or [Action(ActionKind.CALENDAR_EVENT)],
+                               self.display.key_count, fixed, frame.page)
+        return layout_calendar(days, self.display.key_count, cols, frame.page)
+
+    def _calendar_picker_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Multi-select: one tile per calendar, the chosen ones highlighted."""
+        enabled = self._enabled_ids()
+        tiles = [
+            Action(ActionKind.CALENDAR_TOGGLE, data={
+                "entity_id": c.entity_id, "label": c.name, "active": c.entity_id in enabled,
+            })
+            for c in self.calendars
+        ]
+        return layout_page(tiles, self.display.key_count, {0: Action(ActionKind.BACK)}, frame.page)
+
     def _home_key_map(self, frame: Frame) -> dict[int, Action]:
         """Home view: rooms/floors on top, special folders pinned to the bottom row."""
         content = self._items_for(frame)
@@ -736,6 +835,8 @@ class Navigation:
         ]
         if self.weather is not None:
             specials.append(Action(ActionKind.OPEN_WEATHER))
+        if self.calendars:
+            specials.append(Action(ActionKind.OPEN_CALENDAR))
         specials.append(Action(ActionKind.CLOCK))   # live local time
         specials.append(Action(ActionKind.DATE))    # live date + weekday
         specials.append(Action(ActionKind.OPEN_SETTINGS, room=self.settings_folder))  # always last
@@ -862,6 +963,9 @@ class Navigation:
             if action.kind is ActionKind.ENTITY and action.entity is not None and action.entity.has_long_press:
                 self._arm_hold(key, action.entity)
                 return
+            if action.kind is ActionKind.OPEN_CALENDAR:
+                self._arm_hold(key, hint=("calendar-check", "Release to pick"))
+                return
             self._dispatch_down(action)
             return
 
@@ -869,6 +973,12 @@ class Navigation:
         if timer is not None:
             timer.cancel()
         if start is None or action is None:
+            return
+        if action.kind is ActionKind.OPEN_CALENDAR:
+            if (time.monotonic() - start) >= LONG_PRESS_S:
+                self._push(Frame(FrameKind.CALENDAR_PICKER))  # choose which calendars feed the tile
+            else:
+                self._open_calendar()
             return
         if action.kind is ActionKind.ENTITY and action.entity is not None:
             entity = action.entity
@@ -881,16 +991,22 @@ class Navigation:
             else:
                 self._restore_key(key)  # non-controllable short press: nothing to do
 
-    def _arm_hold(self, key: int, entity: DeviceEntity) -> None:
-        """Record press time and schedule the armed-feedback render."""
-        timer = threading.Timer(LONG_PRESS_S, self._show_hold_feedback, args=(key, entity))
+    def _arm_hold(self, key: int, entity: DeviceEntity | None = None,
+                  hint: tuple[str, str] | None = None) -> None:
+        """Record press time and schedule the armed-feedback render.
+
+        ``hint`` is an (icon, text) pair for keys that aren't entity tiles; when
+        omitted the wording is derived from ``entity``.
+        """
+        timer = threading.Timer(LONG_PRESS_S, self._show_hold_feedback, args=(key, entity, hint))
         timer.daemon = True
         with self._lock:
             self._press_start[key] = time.monotonic()
             self._hold_timers[key] = timer
         timer.start()
 
-    def _show_hold_feedback(self, key: int, entity: DeviceEntity) -> None:
+    def _show_hold_feedback(self, key: int, entity: DeviceEntity | None,
+                            hint: tuple[str, str] | None = None) -> None:
         """Fired by the timer: if the key is still held, show it is armed.
 
         When the entity has a single option (History only) the hint names it;
@@ -899,7 +1015,11 @@ class Navigation:
         with self._lock:
             if self._disconnected or key not in self._press_start:
                 return  # released (or disconnected) before the threshold
-            if self._opens_controls(entity):
+            if hint is not None:
+                img = self.renderer.hold_feedback(*hint)
+            elif entity is None:
+                return
+            elif self._opens_controls(entity):
                 img = self.renderer.hold_feedback("play-box", "Release for controls")
             elif self._menu_is_history_only(self._entity_menu_options(entity)):
                 img = self.renderer.hold_feedback("history", "Release for history")
@@ -924,6 +1044,10 @@ class Navigation:
             self._push(Frame(FrameKind.CLIMATE))
         elif action.kind is ActionKind.OPEN_WEATHER:
             self._open_weather()
+        elif action.kind is ActionKind.OPEN_CALENDAR:
+            self._open_calendar()  # the press path arms a hold first; this is the fallback
+        elif action.kind is ActionKind.CALENDAR_TOGGLE:
+            self._toggle_calendar(action)
         elif action.kind is ActionKind.OPEN_SETTINGS:
             self._push(Frame(FrameKind.SETTINGS))
         elif action.kind is ActionKind.SETTINGS_ITEM:
@@ -933,7 +1057,8 @@ class Navigation:
                              ActionKind.TIMER_STATUS, ActionKind.CLIMATE_TEMP,
                              ActionKind.CLIMATE_STATUS, ActionKind.MEDIA_ART,
                              ActionKind.MEDIA_TEXT, ActionKind.MEDIA_VOLUME,
-                             ActionKind.ALARM_STATUS, ActionKind.CLOCK, ActionKind.DATE):
+                             ActionKind.ALARM_STATUS, ActionKind.CLOCK, ActionKind.DATE,
+                             ActionKind.CALENDAR_DAY, ActionKind.CALENDAR_EVENT):
             return  # forecast/history/status/media-info/clock tiles are not interactive
         elif action.kind is ActionKind.MENU_ITEM:
             self._dispatch_menu_target(action.entity, (action.data or {}).get("target"))
@@ -1076,6 +1201,46 @@ class Navigation:
                 logger.warning("Forecast fetch failed: %s", exc)
         self._push(Frame(FrameKind.WEATHER, forecast=parse_forecast(raw)))
 
+    def _open_calendar(self) -> None:
+        """Open the agenda: upcoming events across the chosen calendars.
+
+        Fetched on entry like the forecast. If the service isn't available the
+        view falls back to each calendar's current-or-next event, which we
+        already know from its attributes.
+        """
+        active = self._active_calendars()
+        now = datetime.now(self.tz)
+        raw: dict[str, list[dict]] = {}
+        if self.on_calendar_events is not None and active:
+            try:
+                raw = self.on_calendar_events([c.entity_id for c in active], AGENDA_DAYS) or {}
+            except Exception as exc:  # noqa: BLE001 - the agenda is best-effort
+                logger.warning("Calendar events fetch failed: %s", exc)
+        names = {c.entity_id: c.name for c in self.calendars}
+        events = parse_events(raw, names, now, self.tz)
+        if not events:
+            events = events_from_calendars(active, now, self.tz)
+        self._push(Frame(FrameKind.CALENDAR, events=events))
+
+    def _toggle_calendar(self, action: Action) -> None:
+        """Turn a calendar on/off in the picker and persist the choice.
+
+        Stays in the picker so several can be toggled in a row.
+        """
+        entity_id = (action.data or {}).get("entity_id")
+        if not entity_id:
+            return
+        with self._lock:
+            ids = self._enabled_ids()
+            if entity_id in ids:
+                ids.discard(entity_id)
+            else:
+                ids.add(entity_id)
+            self._enabled_calendars = ids
+            self._calendar_shown = ""  # force the home tile to repaint on the way back
+        state.save({**state.load(), "calendars": sorted(ids)})
+        self.render()
+
     def _open_history(self, entity: DeviceEntity) -> None:
         raw: list[dict] = []
         if self.on_logbook is not None:
@@ -1110,7 +1275,8 @@ class Navigation:
 
     def _run_setting(self, action: Action) -> None:
         which = (action.data or {}).get("action")
-        callback = {"reload": self.on_reload, "rotate": self.on_rotate}.get(which)
+        callback = {"reload": self.on_reload, "rotate": self.on_rotate,
+                    "brightness": self.on_brightness}.get(which)
         if callback is None:
             return
         try:
@@ -1118,14 +1284,17 @@ class Navigation:
         except Exception as exc:  # noqa: BLE001 - a failed setting must not crash the deck
             logger.warning("Setting '%s' failed: %s", which, exc)
 
-    def set_model(self, rooms, floors, unassigned_rooms, weather) -> None:
+    def set_model(self, rooms, floors, unassigned_rooms, weather, calendars=None) -> None:
         """Swap in a freshly loaded model (used by the Settings reload)."""
         with self._lock:
             self.rooms = rooms
             self.floors = floors or []
             self.unassigned_rooms = unassigned_rooms or []
             self.weather = weather
+            self.calendars = calendars or []
+            self._calendar_shown = ""
             self._collapsed_floors.clear()  # floor ids may have changed
+            # _enabled_calendars is the user's choice, keyed by entity id: it survives a reload.
         self.home()  # return to a freshly rendered home
 
     def _invoke_timer(self, action: Action) -> None:
@@ -1148,6 +1317,28 @@ class Navigation:
                     # omitting bg here repainted the tile with the default dark BG.
                     self.display.set_image(key, self.renderer.weather_button(self.weather, bg=renderer_mod.RESERVED_BG))
                     return
+
+    def update_calendar(self, entity_id: str, state_value: str, attributes: dict) -> bool:
+        """Refresh a calendar entity and repaint the home tile if it's visible.
+
+        Returns False for an entity we don't track, so the caller can fall
+        through to the normal entity path.
+        """
+        with self._lock:
+            calendar = next((c for c in self.calendars if c.entity_id == entity_id), None)
+            if calendar is None:
+                return False
+            calendar.update(state_value, attributes, self.tz)
+            if self._disconnected or self.stack[-1].kind is not FrameKind.HOME:
+                return True
+            for key, action in self.key_map.items():
+                if action.kind is ActionKind.OPEN_CALENDAR:
+                    event = self._next_event()
+                    self._calendar_shown = self._calendar_text(event)
+                    self.display.set_image(
+                        key, self.renderer.calendar_button(event, bg=renderer_mod.RESERVED_BG))
+                    break
+            return True
 
     def _apply_picker_cell(self, action: Action) -> None:
         """Apply a picker swatch (brightness/color/temp/percentage) and close it."""
@@ -1237,16 +1428,26 @@ class Navigation:
             elif frame.kind is FrameKind.HOME:
                 self._tick_clock()
 
+    @staticmethod
+    def _calendar_text(event: CalendarEvent | None) -> str:
+        """The calendar tile's rendered text, used to detect when it changed."""
+        return "" if event is None else f"{event.time_label}|{event.summary}"
+
     def _tick_clock(self) -> None:
-        """Redraw the home clock/date tiles when their text has changed."""
+        """Redraw the home clock/date/calendar tiles when their text has changed."""
         now = datetime.now(self.tz)
         clock, date = now.strftime("%H:%M"), now.strftime("%a %b %d")
+        event = self._next_event() if self.calendars else None
+        calendar = self._calendar_text(event)
         for key, action in self.key_map.items():
             if action.kind is ActionKind.CLOCK and clock != self._clock_shown:
                 self.display.set_image(key, self.renderer.clock_tile(now))
             elif action.kind is ActionKind.DATE and date != self._date_shown:
                 self.display.set_image(key, self.renderer.date_tile(now))
-        self._clock_shown, self._date_shown = clock, date
+            elif action.kind is ActionKind.OPEN_CALENDAR and calendar != self._calendar_shown:
+                self.display.set_image(
+                    key, self.renderer.calendar_button(event, bg=renderer_mod.RESERVED_BG))
+        self._clock_shown, self._date_shown, self._calendar_shown = clock, date, calendar
 
     def set_connected(self, connected: bool) -> None:
         with self._lock:
@@ -1405,6 +1606,60 @@ def layout_security(
         col = 1 + col_offset
         for row, action in enumerate(column):
             result[row * cols + col] = action
+    return result
+
+
+def layout_calendar(
+    days: list[CalendarDay],
+    total_keys: int,
+    cols: int,
+    page: int,
+) -> dict[int, Action]:
+    """Lay out the agenda: Back in column 0, one day per column.
+
+    Each day gets a header tile (weekday + date) on the top row with its events
+    stacked underneath, so a column reads as a day. A day with more events than
+    fit spills into the next column, repeating the header. Column 0 holds Back
+    (and Prev/Next when there are more days than columns). Falls back to a flat
+    sequential layout on decks too small for the banded layout.
+    """
+    back: dict[int, Action] = {0: Action(ActionKind.BACK)}
+    rows = total_keys // cols
+    content_cols = cols - 1  # column 0 is reserved for Back/navigation
+    per_col = rows - 1       # the top cell of each column is the day header
+
+    def event_tile(event, today: bool) -> Action:
+        return Action(ActionKind.CALENDAR_EVENT, event=event, data={"today": today})
+
+    if per_col < 1 or content_cols < 1:  # too small for headers + a nav column
+        flat = [event_tile(e, i == 0) for i, day in enumerate(days) for e in day.events]
+        return layout_page(flat, total_keys, back, page)
+
+    # One "column" per chunk of `per_col` events; a busy day spans several, and
+    # a day with nothing on still gets its (empty) column.
+    columns: list[tuple[CalendarDay, list[Action]]] = []
+    for i, day in enumerate(days):
+        starts = list(range(0, len(day.events), per_col)) or [0]  # [0] = an empty day
+        for start in starts:
+            chunk = [event_tile(e, i == 0) for e in day.events[start : start + per_col]]
+            columns.append((day, chunk))
+
+    result = dict(back)
+    page_count = max(1, _ceil_div(len(columns), content_cols))
+    page = max(0, min(page, page_count - 1))
+
+    if page_count > 1:  # navigation tucked into the bottom of the (empty) column 0
+        if page > 0:
+            result[(rows - 2) * cols] = Action(ActionKind.PAGE, delta=-1)
+        if page < page_count - 1:
+            result[(rows - 1) * cols] = Action(ActionKind.PAGE, delta=1)
+
+    for col_offset, (day, chunk) in enumerate(columns[page * content_cols : (page + 1) * content_cols]):
+        col = 1 + col_offset
+        result[col] = Action(ActionKind.CALENDAR_DAY,
+                             data={"label": day.label, "date": day.date_label})
+        for row, tile in enumerate(chunk):
+            result[(row + 1) * cols + col] = tile
     return result
 
 

@@ -260,3 +260,22 @@ def test_set_brightness_while_off_stays_dark(deck_env):
     assert d.brightness == 0            # display stays dark
     ctl.set_display_on(True)
     assert d.brightness == 80           # new configured brightness applies
+
+
+def test_cycle_brightness_steps_applies_and_persists(deck_env):
+    from homedeck import state
+    d = FakeDeck()
+    deck_env.append(d)
+    ctl = DeckController(brightness=60)          # 60 -> next preset is 80
+    redraws = []
+    ctl.set_reconnect_callback(lambda: redraws.append(True))
+
+    ctl.cycle_brightness()
+    assert ctl.brightness == 80 and d.brightness == 80   # applied to the deck
+    assert state.load().get("brightness") == 80          # persisted
+    assert redraws == [True]                             # Settings label redrawn
+
+    ctl.cycle_brightness()                               # 80 -> 100
+    assert ctl.brightness == 100
+    ctl.cycle_brightness()                               # 100 -> wraps to 20
+    assert ctl.brightness == 20 and state.load().get("brightness") == 20

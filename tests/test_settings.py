@@ -26,8 +26,8 @@ def _nav(on_reload=None, weather=None):
 def _special_keys(key_map):
     return [k for k, a in key_map.items()
             if a.kind in (ActionKind.OPEN_SECURITY, ActionKind.OPEN_CLIMATE,
-                          ActionKind.OPEN_WEATHER, ActionKind.OPEN_SETTINGS,
-                          ActionKind.CLOCK, ActionKind.DATE)
+                          ActionKind.OPEN_WEATHER, ActionKind.OPEN_CALENDAR,
+                          ActionKind.OPEN_SETTINGS, ActionKind.CLOCK, ActionKind.DATE)
             or (a.kind is ActionKind.OPEN_ROOM and a.room.is_dynamic)]
 
 
@@ -111,6 +111,31 @@ def test_pressing_rotate_invokes_callback():
     assert calls == [True]
 
 
+# -- brightness setting -------------------------------------------------------
+
+def test_settings_has_brightness_item():
+    nav, _ = _nav()
+    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.SETTINGS)]
+    view = nav._build_key_map()
+    bright = next(a for a in view.values()
+                  if a.kind is ActionKind.SETTINGS_ITEM and a.data.get("action") == "brightness")
+    assert bright.data["label"].startswith("Brightness")
+
+
+def test_pressing_brightness_invokes_callback():
+    calls = []
+    room = Room("living", "Living", entities=[DeviceEntity("light.l", "L", "light", "on")])
+    display = ExportDisplay()
+    nav = Navigation(display, KeyRenderer(display.key_size), [room],
+                     on_service=lambda c: None, on_brightness=lambda: calls.append(True))
+    nav.stack = [Frame(FrameKind.HOME), Frame(FrameKind.SETTINGS)]
+    nav.key_map = nav._build_key_map()
+    key = next(k for k, a in nav.key_map.items()
+               if a.kind is ActionKind.SETTINGS_ITEM and a.data.get("action") == "brightness")
+    nav.handle_press(key, True)
+    assert calls == [True]
+
+
 def test_portrait_home_pins_specials_to_bottom_row():
     # A 4-wide (portrait) display -> 8 rows; specials sit in the reserved bottom
     # band (last two rows, keys 24..31).
@@ -124,8 +149,8 @@ def test_portrait_home_pins_specials_to_bottom_row():
 # -- reserved special-folder band ---------------------------------------------
 
 _SPECIAL_KINDS = {ActionKind.OPEN_SECURITY, ActionKind.OPEN_CLIMATE, ActionKind.OPEN_WEATHER,
-                  ActionKind.OPEN_SETTINGS, ActionKind.CLOCK, ActionKind.DATE,
-                  ActionKind.RESERVED_BLANK}
+                  ActionKind.OPEN_CALENDAR, ActionKind.OPEN_SETTINGS, ActionKind.CLOCK,
+                  ActionKind.DATE, ActionKind.RESERVED_BLANK}
 
 
 def _is_special_or_band(a):

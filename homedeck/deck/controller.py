@@ -28,6 +28,9 @@ PressCallback = Callable[[int, bool], None]
 
 WATCHDOG_INTERVAL_S = 2.0
 
+# Brightness levels the Settings "Brightness" button cycles through (percent).
+BRIGHTNESS_LEVELS = (20, 40, 60, 80, 100)
+
 # Per-key image rotation for a clockwise display rotation of k*90°.
 _TRANSPOSE = {1: Image.ROTATE_270, 2: Image.ROTATE_180, 3: Image.ROTATE_90}
 
@@ -175,10 +178,25 @@ class DeckController:
         """Called (off-lock) after the deck is re-opened, to redraw the view."""
         self._on_reconnect = callback
 
+    @property
+    def brightness(self) -> int:
+        return self._brightness
+
     def set_brightness(self, brightness: int) -> None:
         with self._lock:
             self._brightness = brightness
             self._apply_brightness_locked()
+
+    def cycle_brightness(self) -> None:
+        """Step to the next preset brightness level, persist it, and redraw."""
+        nxt = next((lvl for lvl in BRIGHTNESS_LEVELS if lvl > self._brightness), BRIGHTNESS_LEVELS[0])
+        self.set_brightness(nxt)
+        state.save({**state.load(), "brightness": nxt})
+        if self._on_reconnect is not None:
+            try:
+                self._on_reconnect()  # redraw so the Settings label shows the new value
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Redraw after brightness change failed: %s", exc)
 
     def set_display_on(self, on: bool) -> None:
         """Turn the deck's backlight on/off (e.g. following an occupancy sensor).

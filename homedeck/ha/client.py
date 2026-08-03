@@ -147,6 +147,34 @@ class HaClient:
         forecast = (entry or {}).get("forecast", [])
         return forecast if isinstance(forecast, list) else []
 
+    def get_calendar_events(self, entity_ids: list[str], days: int = 7) -> dict[str, list[dict]]:
+        """Upcoming events per calendar via ``calendar.get_events``.
+
+        Returns {entity_id: [event, ...]}, or {} if the call isn't supported.
+        """
+        if not entity_ids:
+            return {}
+
+        def run() -> dict:
+            return self._cmd.trigger_service_with_response(  # type: ignore[union-attr]
+                "calendar", "get_events", entity_id=entity_ids, duration={"days": days}
+            )
+
+        try:
+            resp = self._execute(run) or {}
+        except Exception as exc:  # noqa: BLE001 - the agenda is best-effort
+            logger.info("Calendar events unavailable (%s)", exc)
+            return {}
+        data = resp.get("response", resp) if isinstance(resp, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        result: dict[str, list[dict]] = {}
+        for entity_id, entry in data.items():
+            events = (entry or {}).get("events") if isinstance(entry, dict) else None
+            if isinstance(events, list):
+                result[entity_id] = events
+        return result
+
     def get_config(self) -> dict:
         """Home Assistant configuration (includes 'time_zone')."""
         result = self._command("get_config")

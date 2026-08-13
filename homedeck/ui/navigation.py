@@ -345,7 +345,10 @@ class Navigation:
         if action.kind is ActionKind.BACK:
             return self.renderer.nav("back")
         if action.kind is ActionKind.PAGE:
-            return self.renderer.nav("next" if action.delta > 0 else "prev")
+            d = action.data or {}
+            kind = "page" if d.get("cycle") else ("next" if action.delta > 0 else "prev")
+            caption = f"{d['page'] + 1}/{d['count']}" if "count" in d else None
+            return self.renderer.nav(kind, caption=caption)
         return self.renderer.blank()
 
     def _render_picker_cell(self, data: dict):
@@ -1077,7 +1080,7 @@ class Navigation:
         elif action.kind is ActionKind.BACK:
             self._pop()
         elif action.kind is ActionKind.PAGE:
-            self._change_page(action.delta)
+            self._change_page(action.delta, (action.data or {}).get("count"))
         elif action.kind is ActionKind.TIMER_ACTION:
             self._invoke_timer(action)
 
@@ -1103,10 +1106,11 @@ class Navigation:
                 self.stack.pop()
         self.render()
 
-    def _change_page(self, delta: int) -> None:
+    def _change_page(self, delta: int, count: int | None = None) -> None:
+        """Step the current frame's page; ``count`` (from the key) makes it wrap."""
         with self._lock:
             frame = self.stack[-1]
-            frame.page = max(0, frame.page + delta)
+            frame.page = (frame.page + delta) % count if count else max(0, frame.page + delta)
         self.render()
 
     def _toggle_floor(self, floor: Floor) -> None:
@@ -1117,6 +1121,7 @@ class Navigation:
                 self._collapsed_floors.discard(fid)
             else:
                 self._collapsed_floors.add(fid)
+            self.stack[-1].page = 0  # content just changed size; a stale page would go dead
         self.render()
 
     def _render_room_tile(self, room: Room):
@@ -1532,6 +1537,13 @@ def layout_home(
     (taller-than-wide). Its cells get a contrasted background (RESERVED_BLANK)
     so the special zone is visually distinct; the specials are bottom-anchored
     within it. Room/floor content fills the rows above and paginates there.
+
+    Overflowing content gets a single cycling page key (advances, wrapping back
+    to the first page) rather than a Prev/Next pair: a full specials band leaves
+    no room for two keys, and with eight specials none at all — which used to
+    make every room past the first page unreachable. The key goes in the last
+    free band cell when the specials leave one, else it costs the last content
+    slot.
     """
     rows = total_keys // cols
     reserved_rows = 2 if rows > cols else 1                       # portrait: 2 rows
@@ -1540,6 +1552,19 @@ def layout_home(
     zone_start = (rows - reserved_rows) * cols                    # first key of the band
     special_start = (rows - special_rows) * cols                  # specials pinned to the bottom
     content_capacity = zone_start
+
+    # Where the page key lands, and what it costs. Decided before the capacity
+    # arithmetic so the page count matches the slots actually filled; losing one
+    # slot can never turn an overflowing layout back into a single page.
+    page_key: int | None = None
+    if len(content) > content_capacity:
+        used = set(range(special_start, special_start + len(specials)))
+        free = [k for k in range(zone_start, total_keys) if k not in used]
+        if free:
+            page_key = free[-1]                                   # a spare band cell: free of charge
+        else:
+            page_key = content_capacity - 1                       # last content slot instead
+            content_capacity -= 1
 
     if content_capacity <= 0:  # deck too short for a reserved band
         return layout_page(content + specials, total_keys, {}, page)
@@ -1555,13 +1580,9 @@ def layout_home(
     for key, action in enumerate(content[page * content_capacity : (page + 1) * content_capacity]):
         result[key] = action
 
-    if page_count > 1:  # pagination goes in band cells not used by the specials
-        used = set(range(special_start, special_start + len(specials)))
-        free = [k for k in range(zone_start, total_keys) if k not in used]
-        if page > 0 and len(free) >= 2:
-            result[free[-2]] = Action(ActionKind.PAGE, delta=-1)
-        if page < page_count - 1 and free:
-            result[free[-1]] = Action(ActionKind.PAGE, delta=1)
+    if page_key is not None and page_count > 1:
+        result[page_key] = Action(ActionKind.PAGE, delta=1,
+                                  data={"page": page, "count": page_count, "cycle": True})
     return result
 
 
@@ -1598,10 +1619,11 @@ def layout_security(
     page = max(0, min(page, page_count - 1))
 
     if page_count > 1:  # navigation tucked into the bottom of the (empty) column 0
+        where = {"page": page, "count": page_count}
         if page > 0:
-            result[(rows - 2) * cols] = Action(ActionKind.PAGE, delta=-1)
+            result[(rows - 2) * cols] = Action(ActionKind.PAGE, delta=-1, data=where)
         if page < page_count - 1:
-            result[(rows - 1) * cols] = Action(ActionKind.PAGE, delta=1)
+            result[(rows - 1) * cols] = Action(ActionKind.PAGE, delta=1, data=where)
 
     page_columns = columns[page * content_cols : (page + 1) * content_cols]
     for col_offset, column in enumerate(page_columns):
@@ -1651,10 +1673,11 @@ def layout_calendar(
     page = max(0, min(page, page_count - 1))
 
     if page_count > 1:  # navigation tucked into the bottom of the (empty) column 0
+        where = {"page": page, "count": page_count}
         if page > 0:
-            result[(rows - 2) * cols] = Action(ActionKind.PAGE, delta=-1)
+            result[(rows - 2) * cols] = Action(ActionKind.PAGE, delta=-1, data=where)
         if page < page_count - 1:
-            result[(rows - 1) * cols] = Action(ActionKind.PAGE, delta=1)
+            result[(rows - 1) * cols] = Action(ActionKind.PAGE, delta=1, data=where)
 
     for col_offset, (day, chunk) in enumerate(columns[page * content_cols : (page + 1) * content_cols]):
         col = 1 + col_offset
@@ -1692,8 +1715,9 @@ def layout_page(items: list[Action], total_keys: int, fixed: dict[int, Action], 
     for slot, action in zip(slots, items[start : start + per_page]):
         result[slot] = action
 
+    where = {"page": page, "count": page_count}
     if page > 0:
-        result[prev_key] = Action(ActionKind.PAGE, delta=-1)
+        result[prev_key] = Action(ActionKind.PAGE, delta=-1, data=where)
     if page < page_count - 1:
-        result[next_key] = Action(ActionKind.PAGE, delta=1)
+        result[next_key] = Action(ActionKind.PAGE, delta=1, data=where)
     return result

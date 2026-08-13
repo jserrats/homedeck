@@ -68,7 +68,10 @@ need the whole screen — so they open a small **menu of buttons** instead; read
 
 The special folders live in a **reserved, contrasted band** at the bottom of the home screen
 (the bottom row in landscape, the bottom two rows in portrait); rooms/floors fill the rows
-above. The band has a slightly lighter background so it reads as a distinct zone:
+above. When there are more rooms than fit, a **page key** appears showing your position
+(`1/2`) — tapping it advances a page and wraps back around from the last one. It takes a
+spare cell in the band when the specials leave one, otherwise the last room slot. The band
+has a slightly lighter background so it reads as a distinct zone:
 
 - A dynamic **Lights On** folder: open it to see every light that is currently on (across all
   rooms) and tap to turn any off. It updates live as lights change.

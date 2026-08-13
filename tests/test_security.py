@@ -17,16 +17,18 @@ def test_layout_home_pins_specials_and_paginates_content():
     content = [Action(ActionKind.OPEN_ROOM, room=None) for _ in range(30)]  # > 24 top-row slots
     specials = [Action(ActionKind.OPEN_SECURITY), Action(ActionKind.OPEN_SECURITY)]
     page0 = layout_home(content, specials, 32, 8, page=0)
-    # specials always bottom-left; Next on bottom-right
+    # specials always bottom-left; the page key on bottom-right
     assert page0[24].kind is ActionKind.OPEN_SECURITY
     assert page0[25].kind is ActionKind.OPEN_SECURITY
     assert page0[31].kind is ActionKind.PAGE and page0[31].delta == 1
+    assert page0[31].data == {"page": 0, "count": 2, "cycle": True}
     # top rows hold the first 24 content items
     assert all(page0[k].kind is ActionKind.OPEN_ROOM for k in range(24))
 
     page1 = layout_home(content, specials, 32, 8, page=1)
     assert page1[24].kind is ActionKind.OPEN_SECURITY  # still pinned
-    assert page1[30].kind is ActionKind.PAGE and page1[30].delta == -1  # Prev
+    assert page1[31].kind is ActionKind.PAGE and page1[31].delta == 1  # cycles back to page 0
+    assert page1[31].data == {"page": 1, "count": 2, "cycle": True}
 
 COLS, TOTAL = 8, 32
 

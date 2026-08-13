@@ -539,11 +539,16 @@ class KeyRenderer:
         """A swatch previewing a percentage level (fan speed / cover position)."""
         return self._swatch(WEATHER_ACCENT, pct, None)
 
-    def nav(self, kind: str) -> Image.Image:
-        """kind: 'back' | 'prev' | 'next'."""
+    def nav(self, kind: str, caption: str | None = None) -> Image.Image:
+        """kind: 'back' | 'prev' | 'next' | 'page' (a cycling pager).
+
+        ``caption`` replaces the label with the page position ("2/3"), so an
+        overflowing view says how much more there is.
+        """
         img, draw = self._canvas()
-        glyph_name = {"back": "arrow-left", "prev": "chevron-left", "next": "chevron-right"}.get(kind, "arrow-left")
-        label = {"back": "Back", "prev": "Prev", "next": "Next"}.get(kind, "")
+        glyph_name = {"back": "arrow-left", "prev": "chevron-left", "next": "chevron-right",
+                      "page": "page-next-outline"}.get(kind, "arrow-left")
+        label = caption or {"back": "Back", "prev": "Prev", "next": "Next", "page": "Page"}.get(kind, "")
         self._draw_glyph(draw, icons.glyph(glyph_name), size=int(self.h * 0.40), cy=int(self.h * 0.36), color=NAV_COLOR)
         self._draw_label(draw, label, y=int(self.h * 0.64), size=12, color=NAV_COLOR, max_lines=1)
         return img

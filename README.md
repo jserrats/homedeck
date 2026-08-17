@@ -50,7 +50,10 @@ need the whole screen — so they open a small **menu of buttons** instead; read
   from its config), falling back to the container `TZ`.
 - **Sensors & climate** — the current value is displayed. Within a room, the read-only
   sensors are grouped into a band at the **bottom rows**, separated from the controllable
-  devices in the top rows. **Timestamp/date sensors** (device class `timestamp`/`date`, or any
+  devices in the top rows. The controls take the rows they need and the band gets the rest;
+  when a room has more sensors than the band holds, its last cell becomes a **page key**
+  showing your position (`1/3`) — tapping it pages the band, wrapping back around, while the
+  controls stay put. **Timestamp/date sensors** (device class `timestamp`/`date`, or any
   sensor whose value is an ISO datetime like `2026-07-23T14:49:00+00:00`) show a **human relative
   time** instead of the raw string — `5m ago`, `in 8h`, `in 2d` — under a clock icon.
 - **Covers, doors & windows** — all covers (blinds, shades, garage doors…) and
@@ -152,8 +155,9 @@ Home Assistant  ──WebSocket──▶  HaClient ──▶ rooms/devices model
                           DeckController ──▶ Stream Deck XL
 ```
 
-- **HOME** view: one key per room. **ROOM** view: key 0 is *Back*; devices fill the rest, with
-  *Prev*/*Next* keys when a room has more devices than fit on one page.
+- **HOME** view: one key per room. **ROOM** view: key 0 is *Back*; devices fill the rest, the
+  sensor band paging in place when it overflows. A room with more *controls* than rows falls
+  back to a flat list with *Prev*/*Next* keys, so nothing is unreachable.
 - Two WebSocket connections: one for commands (registry load + service calls), one streaming
   `state_changed` events on a background thread (auto-reconnects).
 

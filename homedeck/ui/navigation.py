@@ -8,8 +8,9 @@ of frames:
             floor-header tile per floor (no extra level to drill into).
   * ROOM  — the room's devices.
 
-The room frame reserves key 0 for Back (pop the stack). Frames paginate,
-reserving the last two keys for Prev/Next when their items overflow.
+The room frame reserves key 0 for Back (pop the stack). Frames paginate when
+their items overflow: banded layouts (home, room sensors) spend a single cell
+on a cycling page key, flat ones reserve the last two keys for Prev/Next.
 
 Key presses (deck worker thread) and live state updates (event thread) both
 mutate the display, so all rendering goes through a single lock.
@@ -1080,7 +1081,7 @@ class Navigation:
         elif action.kind is ActionKind.BACK:
             self._pop()
         elif action.kind is ActionKind.PAGE:
-            self._change_page(action.delta, (action.data or {}).get("count"))
+            self._change_page(action.delta, action.data)
         elif action.kind is ActionKind.TIMER_ACTION:
             self._invoke_timer(action)
 
@@ -1106,11 +1107,21 @@ class Navigation:
                 self.stack.pop()
         self.render()
 
-    def _change_page(self, delta: int, count: int | None = None) -> None:
-        """Step the current frame's page; ``count`` (from the key) makes it wrap."""
+    def _change_page(self, delta: int, where: dict | None = None) -> None:
+        """Step the page, starting from the one the pressed key was drawn on.
+
+        ``where`` is the key's payload: ``page`` is the page actually on screen
+        and ``count`` makes the step wrap. Stepping from the key rather than
+        from ``frame.page`` matters when the content shrank under a stored index
+        (a dynamic folder emptying out): the layouts clamp the page they draw,
+        so a stale frame index would make the first press a no-op.
+        """
+        where = where or {}
+        count = where.get("count")
         with self._lock:
             frame = self.stack[-1]
-            frame.page = (frame.page + delta) % count if count else max(0, frame.page + delta)
+            current = where.get("page", frame.page)
+            frame.page = (current + delta) % count if count else max(0, current + delta)
         self.render()
 
     def _toggle_floor(self, floor: Floor) -> None:
@@ -1482,28 +1493,45 @@ def layout_room(
     """Lay out a room: Back at key 0, controls top, read-only sensors bottom.
 
     Sensors get their own band of rows flush to the bottom of the grid, visually
-    separated from the controllable devices in the top rows. When everything
-    can't fit on one page, falls back to a paginated sequential layout
-    (controls first, then sensors) so nothing is lost.
+    separated from the controllable devices in the top rows. The controls take
+    the rows they need (Back rides in the first) and the band gets what is left,
+    up to the rows the sensors would need to all show at once.
+
+    More sensors than the band holds page in place: its last cell becomes a
+    cycling page key (advances, wrapping back to the first page) captioned with
+    the position, so a sensor-heavy room keeps its band instead of collapsing.
+    Only when the controls alone need every row — leaving nothing for a band —
+    does the whole view fall back to a paginated sequential layout (controls
+    first, then sensors) so nothing is lost.
     """
     back: dict[int, Action] = {0: Action(ActionKind.BACK)}
     rows = total_keys // cols
 
-    sensor_rows = min(_ceil_div(len(readouts), cols), rows - 1) if readouts else 0
-    control_rows = rows - sensor_rows
-    control_capacity = control_rows * cols - 1  # minus Back at key 0
-    sensor_capacity = sensor_rows * cols
+    control_rows = max(1, _ceil_div(len(controls) + 1, cols))  # +1: Back at key 0
+    sensor_rows = min(_ceil_div(len(readouts), cols), rows - control_rows) if readouts else 0
+    control_capacity = (rows - sensor_rows) * cols - 1  # the rows the band leaves, minus Back
 
-    if len(controls) > control_capacity or len(readouts) > sensor_capacity:
+    if (readouts and sensor_rows < 1) or len(controls) > control_capacity:
         return layout_page(controls + readouts, total_keys, back, page)
 
     result = dict(back)
-    control_slots = [k for k in range(control_rows * cols) if k != 0]
-    for slot, action in zip(control_slots, controls):
+    sensor_start = (rows - sensor_rows) * cols
+    for slot, action in zip((k for k in range(sensor_start) if k != 0), controls):
         result[slot] = action
 
-    sensor_start = (rows - sensor_rows) * cols
-    for slot, action in zip(range(sensor_start, total_keys), readouts):
+    sensor_slots = list(range(sensor_start, total_keys))
+    if len(readouts) > len(sensor_slots):
+        page_key = sensor_slots.pop()  # last band cell pages the band
+        if not sensor_slots:  # a one-cell band can't hold both a sensor and the key
+            return layout_page(controls + readouts, total_keys, back, page)
+        per_page = len(sensor_slots)
+        page_count = _ceil_div(len(readouts), per_page)
+        page = max(0, min(page, page_count - 1))
+        readouts = readouts[page * per_page : (page + 1) * per_page]
+        result[page_key] = Action(ActionKind.PAGE, delta=1,
+                                  data={"page": page, "count": page_count, "cycle": True})
+
+    for slot, action in zip(sensor_slots, readouts):
         result[slot] = action
     return result
 

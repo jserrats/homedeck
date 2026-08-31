@@ -27,6 +27,40 @@ CLOSURE_ICONS: dict[str, tuple[str, str]] = {
     "window": ("window-open-variant", "window-closed-variant"),
 }
 
+# Home Assistant derives a binary_sensor's icon from its device_class *and*
+# state; without this we fell back to the domain default and every uncovered
+# device class rendered as the same blank dot. Mirrors the frontend's
+# binarySensorIcon(): device_class -> (on icon, off icon).
+BINARY_SENSOR_ICONS: dict[str, tuple[str, str]] = {
+    "battery": ("battery-outline", "battery"),
+    "battery_charging": ("battery-charging", "battery"),
+    "carbon_monoxide": ("smoke-detector-alert", "smoke-detector"),
+    "cold": ("snowflake", "thermometer"),
+    "connectivity": ("check-network-outline", "close-network-outline"),
+    "gas": ("alert-circle", "check-circle"),
+    "heat": ("fire", "thermometer"),
+    "light": ("brightness-7", "brightness-5"),
+    "lock": ("lock-open-variant", "lock"),  # on = unlocked
+    "moisture": ("water", "water-off"),
+    "motion": ("motion-sensor", "motion-sensor-off"),
+    "occupancy": ("home", "home-outline"),
+    "opening": ("square-outline", "square"),
+    "plug": ("power-plug", "power-plug-off"),
+    "power": ("power-plug", "power-plug-off"),
+    "presence": ("home", "home-outline"),
+    "problem": ("alert-circle", "check-circle"),
+    "running": ("play", "stop"),
+    "safety": ("alert-circle", "check-circle"),
+    "smoke": ("smoke-detector-variant-alert", "smoke-detector-variant"),
+    "sound": ("music-note", "music-note-off"),
+    "tamper": ("alert-circle", "check-circle"),
+    "update": ("package-up", "package"),
+    "vibration": ("vibrate", "crop-portrait"),
+}
+
+# Fallback pair for a binary_sensor with no (or an unknown) device_class.
+BINARY_SENSOR_DEFAULT = ("checkbox-marked-circle", "radiobox-blank")
+
 # Default icon per domain when the entity has no explicit icon.
 DOMAIN_ICONS: dict[str, str] = {
     "light": "lightbulb",
@@ -60,13 +94,10 @@ DEVICE_CLASS_ICONS: dict[tuple[str, str], str] = {
     ("sensor", "signal_strength"): "wifi",
     ("sensor", "timestamp"): "clock-outline",
     ("sensor", "date"): "calendar",
-    ("binary_sensor", "motion"): "motion-sensor",
+    # door/window/opening also have state-aware pairs above; these are the
+    # fallbacks for when the state is unknown/unavailable.
     ("binary_sensor", "door"): "door",
     ("binary_sensor", "window"): "window-closed-variant",
-    ("binary_sensor", "moisture"): "water",
-    ("binary_sensor", "smoke"): "smoke-detector",
-    ("binary_sensor", "occupancy"): "account",
-    ("binary_sensor", "presence"): "home-account",
     ("binary_sensor", "moving"): "walk",
     ("binary_sensor", "opening"): "square-outline",
     ("button", "restart"): "restart",
@@ -123,7 +154,7 @@ def resolve_icon_name(
     """Pick the best MDI icon name that exists in the font.
 
     Order: explicit entity icon -> state-aware default (locks, open/closed
-    closures) -> (domain, device_class) -> domain -> generic.
+    closures, binary_sensors) -> (domain, device_class) -> domain -> generic.
     """
     codepoints = _codepoints()
 
@@ -136,6 +167,16 @@ def resolve_icon_name(
         name = open_name if is_open else closed_name
         if name in codepoints:
             return name
+
+    if domain == "binary_sensor":
+        pair = BINARY_SENSOR_ICONS.get(device_class or "")
+        if pair is None and (domain, device_class) not in DEVICE_CLASS_ICONS:
+            pair = BINARY_SENSOR_DEFAULT  # no better idea than HA's own dot
+        if pair is not None:
+            on_name, off_name = pair
+            name = on_name if (state or "").lower() == "on" else off_name
+            if name in codepoints:
+                return name
 
     if domain == "timer":
         s = (state or "").lower()

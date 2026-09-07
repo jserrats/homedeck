@@ -47,7 +47,11 @@ def _slug(name: str) -> str:
 
 
 def export_views(rooms, navigation, display: ExportDisplay, out_dir: str) -> list[Path]:
-    """Render the home screen and each room to PNG grids; return written paths."""
+    """Render the home screen and each room to PNG grids; return written paths.
+
+    A room that owns automations gets a second grid for its automations page,
+    the last one in its cycle.
+    """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -64,5 +68,13 @@ def export_views(rooms, navigation, display: ExportDisplay, out_dir: str) -> lis
         path = out / f"{i:02d}-{_slug(room.name)}.png"
         display.grid().save(path)
         written.append(path)
+
+        if any(e.is_automation for e in room.entities):
+            display.reset()
+            # The automations sit on the last page; a big index is clamped to it.
+            navigation.open_room(room, page=len(room.entities))
+            path = out / f"{i:02d}-{_slug(room.name)}-automations.png"
+            display.grid().save(path)
+            written.append(path)
 
     return written

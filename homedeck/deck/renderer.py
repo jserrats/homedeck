@@ -150,10 +150,12 @@ class KeyRenderer:
         )
         glyph = icons.glyph(icon_name)
         value = entity.display_value()
+        icon_size, icon_cy = int(self.h * 0.46), int(self.h * 0.38)
 
         if value is not None:
-            # Read-only entity: small icon up top, big value, name at the bottom.
-            self._draw_glyph(draw, glyph, size=int(self.h * 0.28), cy=int(self.h * 0.22), color=color)
+            # Readout tile: small icon up top, big value, name at the bottom.
+            icon_size, icon_cy = int(self.h * 0.28), int(self.h * 0.22)
+            self._draw_glyph(draw, glyph, size=icon_size, cy=icon_cy, color=color)
             value_font = self._fit_value_font(value, max_size=int(self.h * 0.24), max_width=self.w - 8)
             draw.text((self.w / 2, self.h * 0.52), value, font=value_font, fill=TEXT, anchor="mm")
             self._draw_label(draw, entity.name, y=int(self.h * 0.74), size=11, color=NAV_COLOR, max_lines=1)
@@ -170,16 +172,24 @@ class KeyRenderer:
         if unavailable:
             self._draw_warning_badge(draw)
         elif entity.is_off:
-            self._draw_off_bar(draw)
+            self._draw_off_bar(draw, cy=icon_cy, size=icon_size)
         return img
 
-    def _draw_off_bar(self, draw) -> None:
-        """A grey diagonal bar across the icon marking an off device."""
-        p0 = (self.w * 0.24, self.h * 0.60)
-        p1 = (self.w * 0.76, self.h * 0.14)
+    def _draw_off_bar(self, draw, cy: float | None = None, size: float | None = None) -> None:
+        """A grey diagonal bar across the icon marking an off device.
+
+        Sized to the icon it crosses — the large controllable glyph by default,
+        or the small one of a readout tile, whose value text sits just below and
+        would otherwise be struck through.
+        """
+        if cy is None or size is None:
+            cy, size = self.h * 0.38, self.h * 0.46
+        half, spread = size / 2, size * 0.565
+        p0 = (self.w / 2 - spread, cy + half)
+        p1 = (self.w / 2 + spread, cy - half)
         # Dark underlay first so the grey bar reads over light and dark icons alike.
-        draw.line([p0, p1], fill=(18, 18, 20), width=max(3, int(self.h * 0.11)))
-        draw.line([p0, p1], fill=(188, 188, 194), width=max(2, int(self.h * 0.055)))
+        draw.line([p0, p1], fill=(18, 18, 20), width=max(3, int(size * 0.24)))
+        draw.line([p0, p1], fill=(188, 188, 194), width=max(2, int(size * 0.12)))
 
     def _draw_warning_badge(self, draw) -> None:
         """A small red warning triangle in the top-right corner."""

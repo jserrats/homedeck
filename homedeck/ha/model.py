@@ -35,7 +35,7 @@ WARM_WHITE = (255, 210, 160)
 
 # On/off devices that get a clear "off" bar when off (a dim colored light can
 # otherwise look like it's on). Covers/locks have their own open/closed colors.
-OFF_INDICATOR_DOMAINS = frozenset({"light", "switch", "fan", "input_boolean"})
+OFF_INDICATOR_DOMAINS = frozenset({"light", "switch", "fan", "input_boolean", "automation"})
 
 # Climate-related domains whose icon reads sky-blue (not the amber "on") when active.
 CLIMATE_DOMAINS = frozenset({"fan", "climate"})
@@ -59,12 +59,16 @@ ALARM_ARM_AWAY = 2
 ALARM_ARM_NIGHT = 4
 ALARM_ARM_VACATION = 32
 
+# Automations: state on/off = enabled/disabled; a press toggles that, a long
+# press can run them (automation.trigger).
+AUTOMATION_DOMAIN = "automation"
+
 # Domains whose long-press opens a state-history / logbook view.
 HISTORY_DOMAINS = frozenset({"switch", "binary_sensor"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
 CONTROLLABLE_DOMAINS = (
     TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS | {TIMER_DOMAIN}
-    | {"climate", MEDIA_PLAYER_DOMAIN, ALARM_DOMAIN}
+    | {"climate", MEDIA_PLAYER_DOMAIN, ALARM_DOMAIN, AUTOMATION_DOMAIN}
 )
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
 
@@ -223,6 +227,11 @@ class DeviceEntity:
         return self.domain == "binary_sensor" and self.device_class in PRESENCE_DEVICE_CLASSES
 
     @property
+    def is_automation(self) -> bool:
+        """An automation (its own page at the end of the room it belongs to)."""
+        return self.domain == AUTOMATION_DOMAIN
+
+    @property
     def is_temperature_sensor(self) -> bool:
         """A sensor reporting temperature (shown room-labelled in the Climate folder)."""
         return self.domain == "sensor" and self.device_class == "temperature"
@@ -350,12 +359,21 @@ class DeviceEntity:
     def display_value(self) -> str | None:
         """The text shown as the key's main value (sensors/climate), else None.
 
-        Controllable devices show only their name + colored icon; read-only
-        entities show their current reading, with numbers cleaned up (float
-        noise stripped) and the unit spaced like the HA UI (e.g. "78.4 cm").
+        Read-only entities show their current reading, with numbers cleaned up
+        (float noise stripped) and the unit spaced like the HA UI (e.g.
+        "78.4 cm"); a few controllable types have a reading worth the same
+        treatment (a timer's remaining time, when an automation last ran).
+        Everything else shows only its name + colored icon.
         """
         if self.domain == TIMER_DOMAIN:
             return format_duration(self.remaining_seconds())
+        if self.domain == AUTOMATION_DOMAIN:
+            if self.status is Status.UNAVAILABLE:
+                return "—"  # no attributes to read a last-run time from
+            dt = self.last_triggered
+            if dt is None:
+                return "Never"
+            return humanize_datetime(dt) or "Never"
         if self.domain == "sensor":
             if self.status is Status.UNAVAILABLE:
                 return "—"
@@ -390,6 +408,10 @@ class DeviceEntity:
             # Pause when running; otherwise start (which also resumes a paused timer).
             service = "pause" if (self.state or "").lower() == "active" else "start"
             return (TIMER_DOMAIN, service, self.entity_id, {})
+        if self.domain == AUTOMATION_DOMAIN:
+            # Like a switch: a press enables/disables it. Running it is a
+            # long-press action (see automation_trigger_call).
+            return (AUTOMATION_DOMAIN, "toggle", self.entity_id, {})
         if self.domain == "climate":
             return self.climate_power_call()
         if self.domain == MEDIA_PLAYER_DOMAIN:
@@ -429,6 +451,21 @@ class DeviceEntity:
         if self.domain == LOCK_DOMAIN:
             return (LOCK_DOMAIN, "open", self.entity_id, {})
         return None
+
+    # -- automation ---------------------------------------------------------
+
+    @property
+    def last_triggered(self) -> datetime | None:
+        """When the automation last ran, if it ever has."""
+        return _parse_iso_datetime(self.attributes.get("last_triggered"))
+
+    def automation_trigger_call(self) -> tuple[str, str, str, dict]:
+        """Run the automation's actions now.
+
+        ``skip_condition`` matches the HA frontend's "Run actions" button: the
+        conditions are for the trigger, not for a manual run.
+        """
+        return (AUTOMATION_DOMAIN, "trigger", self.entity_id, {"skip_condition": True})
 
     # -- climate / thermostat -----------------------------------------------
 

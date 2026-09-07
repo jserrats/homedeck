@@ -76,6 +76,7 @@ DOMAIN_ICONS: dict[str, str] = {
     "timer": "timer-outline",
     "media_player": "cast",
     "alarm_control_panel": "shield-home-outline",
+    "automation": "robot",
 }
 
 # More specific defaults keyed by (domain, device_class).
@@ -196,6 +197,12 @@ def resolve_icon_name(
             "pending": "shield-sync",
             "triggered": "shield-alert",
         }.get((state or "").lower(), "shield-home-outline")
+        if name in codepoints:
+            return name
+
+    if domain == "automation":
+        # on = enabled, off = disabled (HA's own automation icons).
+        name = "robot-off" if (state or "").lower() == "off" else "robot"
         if name in codepoints:
             return name
 

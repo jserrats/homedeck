@@ -45,13 +45,20 @@ need the whole screen — so they open a small **menu of buttons** instead; read
   History tile.
 - **Buttons** (`button` / `input_button`) — a single press fires the button (`.press`). They're
   stateless, and rendered as a black icon with a white outline to look like a pressable key.
-- **Automations** — every room's automations get a **page of their own, the last one**, so they
-  never crowd the devices; tap the page key to reach them (see *Sensors & climate* below). Each
-  key shows a **robot icon** — amber when the automation is enabled, grey with the off-bar when
-  disabled — over **when it last ran** (`5m ago`, `2d ago`, or `Never`). A **single press**
-  enables/disables it; a **long press** opens its controls: **Toggle**, **Run** (runs the
-  actions now, skipping the conditions, like HA's own *Run actions*) and **History**.
-  Automations belong to a room when they're assigned to that **area** in Home Assistant.
+- **Automations & scripts** — every room's automations and scripts get a **page of their own,
+  the last one**, so they never crowd the devices; tap the page key to reach them (see *Sensors
+  & climate* below). Both belong to a room when they're assigned to that **area** in Home
+  Assistant — one with no area isn't shown.
+  - **Automations** show a **robot icon** — amber when the automation is enabled, grey with the
+    off-bar when disabled — over **when it last ran** (`5m ago`, `2d ago`, or `Never`). A
+    **single press** enables/disables it; a **long press** opens its controls: **Toggle**,
+    **Run** (runs the actions now, skipping the conditions, like HA's own *Run actions*) and
+    **History**.
+  - **Scripts** show a **script icon** over the same last-ran time, or **Running** in amber
+    while the sequence is executing. A script has nothing to enable or disable, so a **single
+    press runs it** (`script.turn_on`) — and cancels the run if one is already in progress. A
+    **long press** opens its controls: **Run**, **Cancel** (only while it's running) and
+    **History**.
 - **History** (any entity) — opens a fullscreen timeline of recent state changes from the HA
   logbook, newest first, each showing the **clock time**, the new state, and **what triggered
   it** (an automation, a user, or another entity). Times use Home Assistant's own timezone (read
@@ -61,9 +68,9 @@ need the whole screen — so they open a small **menu of buttons** instead; read
   devices in the top rows. The controls take the rows they need and the band gets the rest;
   when a room has more sensors than the band holds, its last cell becomes a **page key**
   showing your position (`1/3`) — tapping it pages the band, wrapping back around, while the
-  controls stay put. The same key carries on into the room's **automations page(s)** when it
-  has any, so one key walks the whole room: sensor pages first, automations last, then back
-  to the top. **Timestamp/date sensors** (device class `timestamp`/`date`, or any
+  controls stay put. The same key carries on into the room's **automations & scripts page(s)**
+  when it has any, so one key walks the whole room: sensor pages first, automations and scripts
+  last, then back to the top. **Timestamp/date sensors** (device class `timestamp`/`date`, or any
   sensor whose value is an ISO datetime like `2026-07-23T14:49:00+00:00`) show a **human relative
   time** instead of the raw string — `5m ago`, `in 8h`, `in 2d` — under a clock icon.
 - **Covers, doors & windows** — all covers (blinds, shades, garage doors…) and
@@ -88,9 +95,11 @@ has a slightly lighter background so it reads as a distinct zone:
 
 - A dynamic **Lights On** folder: open it to see every light that is currently on (across all
   rooms) and tap to turn any off. It updates live as lights change.
-- A **Security** folder gathering every lock, door/window/closure and presence
-  (motion/occupancy) entity in the house, **grouped by type with each type in its own column**
-  (locks, then closures, then presence).
+- A **Security** folder gathering every alarm panel, siren, lock, door/window/closure and
+  presence (motion/occupancy) entity in the house, **grouped by type with each type in its own
+  column** (alarms, then sirens, then locks, then closures, then presence). **Sirens** show a
+  bullhorn icon — **orange and filled while sounding**, outlined and neutral when quiet — and a
+  **press sounds or silences** them (`siren.toggle`).
 - A **Climate** folder gathering every temperature sensor, fan and thermostat, **grouped by
   type with each type in its own column** (temperature sensors, then fans, then thermostats).
   Each **temperature tile shows the room it belongs to** — the room's icon and name instead of
@@ -166,8 +175,8 @@ Home Assistant  ──WebSocket──▶  HaClient ──▶ rooms/devices model
 ```
 
 - **HOME** view: one key per room. **ROOM** view: key 0 is *Back*; devices fill the rest, the
-  sensor band paging in place when it overflows, and the room's automations taking the last
-  page(s) of the same cycling page key. A room with more *controls* than rows falls back to a
+  sensor band paging in place when it overflows, and the room's automations and scripts taking
+  the last page(s) of the same cycling page key. A room with more *controls* than rows falls back to a
   flat list with *Prev*/*Next* keys, so nothing is unreachable.
 - Two WebSocket connections: one for commands (registry load + service calls), one streaming
   `state_changed` events on a background thread (auto-reconnects).
@@ -206,7 +215,7 @@ config.
 ```
 
 `--export` writes one PNG per room (plus the home screen, and a second grid for a room's
-automations page) so you can preview the layout and icons without a deck attached.
+automations & scripts page) so you can preview the layout and icons without a deck attached.
 
 ## Docker on a Raspberry Pi (recommended)
 

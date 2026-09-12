@@ -15,7 +15,7 @@ from enum import Enum
 from ..color import hs_to_rgb, kelvin_to_rgb, scale
 
 # Domains we surface on the deck.
-TOGGLE_DOMAINS = frozenset({"light", "switch", "input_boolean", "fan", "cover"})
+TOGGLE_DOMAINS = frozenset({"light", "switch", "input_boolean", "fan", "cover", "siren"})
 LOCK_DOMAIN = "lock"  # state-based control + long-press to open
 BUTTON_DOMAINS = frozenset({"button", "input_button"})  # momentary press (.press)
 TIMER_DOMAIN = "timer"  # shows remaining; press pauses/resumes; long-press opens detail
@@ -51,6 +51,9 @@ MEDIA_NEXT_TRACK = 32
 MEDIA_VOLUME_STEP = 1024
 MEDIA_STOP = 4096
 
+# Sirens: sounding or quiet. They join the alarm panels in the Security folder.
+SIREN_DOMAIN = "siren"
+
 ALARM_DOMAIN = "alarm_control_panel"
 
 # alarm_control_panel supported_features bits (AlarmControlPanelEntityFeature).
@@ -63,12 +66,16 @@ ALARM_ARM_VACATION = 32
 # press can run them (automation.trigger).
 AUTOMATION_DOMAIN = "automation"
 
+# Scripts: a sequence you run on demand (state on = a run is in progress). They
+# share the automations' page — both are "run this" rather than a device.
+SCRIPT_DOMAIN = "script"
+
 # Domains whose long-press opens a state-history / logbook view.
 HISTORY_DOMAINS = frozenset({"switch", "binary_sensor"})
 DISPLAY_DOMAINS = frozenset({"sensor", "binary_sensor", "climate"})
 CONTROLLABLE_DOMAINS = (
     TOGGLE_DOMAINS | {LOCK_DOMAIN} | BUTTON_DOMAINS | {TIMER_DOMAIN}
-    | {"climate", MEDIA_PLAYER_DOMAIN, ALARM_DOMAIN, AUTOMATION_DOMAIN}
+    | {"climate", MEDIA_PLAYER_DOMAIN, ALARM_DOMAIN, AUTOMATION_DOMAIN, SCRIPT_DOMAIN}
 )
 IN_SCOPE_DOMAINS = CONTROLLABLE_DOMAINS | DISPLAY_DOMAINS
 
@@ -227,9 +234,24 @@ class DeviceEntity:
         return self.domain == "binary_sensor" and self.device_class in PRESENCE_DEVICE_CLASSES
 
     @property
+    def is_siren(self) -> bool:
+        """A siren (shown in the Security folder; a press sounds or silences it)."""
+        return self.domain == SIREN_DOMAIN
+
+    @property
     def is_automation(self) -> bool:
         """An automation (its own page at the end of the room it belongs to)."""
         return self.domain == AUTOMATION_DOMAIN
+
+    @property
+    def is_script(self) -> bool:
+        """A script: a press runs it, and it shares the automations' page."""
+        return self.domain == SCRIPT_DOMAIN
+
+    @property
+    def is_routine(self) -> bool:
+        """An automation or a script — what claims a room's last page(s)."""
+        return self.is_automation or self.is_script
 
     @property
     def is_temperature_sensor(self) -> bool:
@@ -308,6 +330,12 @@ class DeviceEntity:
             if state.startswith("armed"):
                 return Status.SECURE     # armed (green)
             return Status.OFF            # disarmed
+        if self.domain == SIREN_DOMAIN:
+            # Sounding is an alert, so it borrows the alarm's orange rather than
+            # the plain "on" amber; quiet is the resting state (neutral).
+            if state in UNAVAILABLE_STATES:
+                return Status.UNAVAILABLE
+            return Status.OPEN if state == "on" else Status.OFF
         if self.domain == "cover":
             # All covers: closed = green, open = orange, moving = pending.
             if state in UNAVAILABLE_STATES:
@@ -362,14 +390,17 @@ class DeviceEntity:
         Read-only entities show their current reading, with numbers cleaned up
         (float noise stripped) and the unit spaced like the HA UI (e.g.
         "78.4 cm"); a few controllable types have a reading worth the same
-        treatment (a timer's remaining time, when an automation last ran).
+        treatment (a timer's remaining time, when an automation or script
+        last ran).
         Everything else shows only its name + colored icon.
         """
         if self.domain == TIMER_DOMAIN:
             return format_duration(self.remaining_seconds())
-        if self.domain == AUTOMATION_DOMAIN:
+        if self.domain in (AUTOMATION_DOMAIN, SCRIPT_DOMAIN):
             if self.status is Status.UNAVAILABLE:
                 return "—"  # no attributes to read a last-run time from
+            if self.script_is_running:
+                return "Running"
             dt = self.last_triggered
             if dt is None:
                 return "Never"
@@ -412,6 +443,10 @@ class DeviceEntity:
             # Like a switch: a press enables/disables it. Running it is a
             # long-press action (see automation_trigger_call).
             return (AUTOMATION_DOMAIN, "toggle", self.entity_id, {})
+        if self.domain == SCRIPT_DOMAIN:
+            # A script has nothing to enable or disable, so the press is the run
+            # itself; while one is in progress the same press cancels it.
+            return self.script_cancel_call() if self.script_is_running else self.script_run_call()
         if self.domain == "climate":
             return self.climate_power_call()
         if self.domain == MEDIA_PLAYER_DOMAIN:
@@ -452,11 +487,11 @@ class DeviceEntity:
             return (LOCK_DOMAIN, "open", self.entity_id, {})
         return None
 
-    # -- automation ---------------------------------------------------------
+    # -- automations and scripts ---------------------------------------------
 
     @property
     def last_triggered(self) -> datetime | None:
-        """When the automation last ran, if it ever has."""
+        """When the automation or script last ran, if it ever has."""
         return _parse_iso_datetime(self.attributes.get("last_triggered"))
 
     def automation_trigger_call(self) -> tuple[str, str, str, dict]:
@@ -466,6 +501,19 @@ class DeviceEntity:
         conditions are for the trigger, not for a manual run.
         """
         return (AUTOMATION_DOMAIN, "trigger", self.entity_id, {"skip_condition": True})
+
+    @property
+    def script_is_running(self) -> bool:
+        """True while the script's sequence is executing."""
+        return self.is_script and (self.state or "").lower() == "on"
+
+    def script_run_call(self) -> tuple[str, str, str, dict]:
+        """Run the script's sequence now."""
+        return (SCRIPT_DOMAIN, "turn_on", self.entity_id, {})
+
+    def script_cancel_call(self) -> tuple[str, str, str, dict]:
+        """Stop a run in progress."""
+        return (SCRIPT_DOMAIN, "turn_off", self.entity_id, {})
 
     # -- climate / thermostat -----------------------------------------------
 

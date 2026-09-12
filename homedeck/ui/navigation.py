@@ -6,7 +6,7 @@ of frames:
   * HOME  — the "Lights On" folder, then all room folders. When HA has floors,
             the rooms are grouped on the same screen behind a non-interactive
             floor-header tile per floor (no extra level to drill into).
-  * ROOM  — the room's devices, with its automations on the last page.
+  * ROOM  — the room's devices, with its automations and scripts on the last page.
 
 The room frame reserves key 0 for Back (pop the stack). Frames paginate when
 their items overflow: banded layouts (home, room sensors) spend a single cell
@@ -70,6 +70,7 @@ class FrameKind(Enum):
     MEDIA = auto()          # media player: now playing + transport + volume
     ALARM = auto()          # alarm panel: disarm / arm modes
     AUTOMATION = auto()     # automation: enable/disable + run now
+    SCRIPT = auto()         # script: run now / cancel a run in progress
     CLIMATE_DETAIL = auto()  # thermostat: temperature + presets
     WEATHER = auto()
     CALENDAR = auto()         # agenda: upcoming events across the chosen calendars
@@ -423,6 +424,8 @@ class Navigation:
             return self._alarm_key_map(frame)
         if frame.kind is FrameKind.AUTOMATION:
             return self._automation_key_map(frame)
+        if frame.kind is FrameKind.SCRIPT:
+            return self._script_key_map(frame)
         if frame.kind is FrameKind.CLIMATE_DETAIL:
             return self._climate_detail_key_map(frame)
         if frame.kind is FrameKind.WEATHER:
@@ -557,6 +560,29 @@ class Navigation:
                 "color": renderer_mod.SECURE, "active": False, "close": False,
             })
         self._place(result, [self._history_tile(entity)], start=3)
+        return result
+
+    def _script_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Script controls: Back, Run, Cancel while a run is in progress, History.
+
+        A script has no enabled/disabled state to toggle, so the single press is
+        the run itself; this view spells out the two halves of it (and reaches
+        the logbook, which the key cannot).
+        """
+        entity = frame.entity
+        result = {0: Action(ActionKind.BACK)}
+        tiles: list[Action] = []
+        if entity is not None:
+            result[1] = Action(ActionKind.SERVICE_BUTTON, entity=entity, data={
+                "call": entity.script_run_call(), "label": "Run", "icon": "play",
+                "color": renderer_mod.SECURE, "active": False, "close": False,
+            })
+            if entity.script_is_running:
+                tiles.append(Action(ActionKind.SERVICE_BUTTON, entity=entity, data={
+                    "call": entity.script_cancel_call(), "label": "Cancel", "icon": "stop",
+                    "color": renderer_mod.UNAVAILABLE, "active": False, "close": False,
+                }))
+        self._place(result, tiles + [self._history_tile(entity)], start=2)
         return result
 
     def _entity_menu_key_map(self, frame: Frame) -> dict[int, Action]:
@@ -876,27 +902,27 @@ class Navigation:
 
     def _room_key_map(self, frame: Frame) -> dict[int, Action]:
         """Room view: controls in the top rows, sensors in a bottom band, the
-        room's automations on the last page."""
+        room's automations and scripts on the last page."""
         room = frame.room
         if room is not None and room.is_dynamic:
             room.entities = self._collect_on_lights()  # recompute live membership
         entities = room.entities if room else []
-        # Automations are controllable, but they live on the room's last page(s)
-        # rather than among the devices.
+        # Automations and scripts are controllable, but they live on the room's
+        # last page(s) rather than among the devices.
         controls = [Action(ActionKind.ENTITY, entity=e) for e in entities
-                    if e.is_controllable and not e.is_automation]
+                    if e.is_controllable and not e.is_routine]
         readouts = [Action(ActionKind.ENTITY, entity=e) for e in entities if not e.is_controllable]
-        automations = [Action(ActionKind.ENTITY, entity=e) for e in entities if e.is_automation]
+        routines = [Action(ActionKind.ENTITY, entity=e) for e in entities if e.is_routine]
 
         cols = getattr(self.display, "cols", 0)
         if not cols:  # no grid info: fall back to a flat sequential layout
-            return layout_page(controls + readouts + automations, self.display.key_count,
+            return layout_page(controls + readouts + routines, self.display.key_count,
                                {0: Action(ActionKind.BACK)}, frame.page)
         return layout_room(controls, readouts, self.display.key_count, cols, frame.page,
-                           automations=automations)
+                           routines=routines)
 
     def _security_key_map(self, frame: Frame) -> dict[int, Action]:
-        """Security view: locks, closures and presence, one type per row."""
+        """Security view: alarms, sirens, locks, closures and presence, one type per row."""
         groups = [
             [Action(ActionKind.ENTITY, entity=e) for e in group]
             for group in self._collect_security_groups()
@@ -917,19 +943,21 @@ class Navigation:
         return layout_security(groups, self.display.key_count, cols, frame.page)
 
     def _collect_security_groups(self) -> list[list[DeviceEntity]]:
-        """Alarms, then locks, then closures, then presence — sorted, empties dropped."""
-        alarms, locks, closures, presence = [], [], [], []
+        """Alarms, sirens, locks, closures, then presence — sorted, empties dropped."""
+        alarms, sirens, locks, closures, presence = [], [], [], [], []
         for room in self.rooms:
             for entity in room.entities:
                 if entity.is_alarm:
                     alarms.append(entity)
+                elif entity.is_siren:
+                    sirens.append(entity)
                 elif entity.domain == "lock":
                     locks.append(entity)
                 elif entity.is_closure:
                     closures.append(entity)
                 elif entity.is_presence:
                     presence.append(entity)
-        groups = [alarms, locks, closures, presence]
+        groups = [alarms, sirens, locks, closures, presence]
         for group in groups:
             group.sort(key=lambda e: e.name.lower())
         return [g for g in groups if g]
@@ -1192,7 +1220,7 @@ class Navigation:
         """Entities that open a combined control view directly on long press
         (rather than the button-menu used by lights/locks)."""
         return (entity.is_media_player or entity.is_alarm or entity.is_climate
-                or entity.is_timer or entity.is_automation or entity.domain == "cover"
+                or entity.is_timer or entity.is_routine or entity.domain == "cover"
                 or (entity.domain == "fan" and entity.supports_fan_speed))
 
     def _open_entity_menu(self, entity: DeviceEntity) -> None:
@@ -1210,6 +1238,8 @@ class Navigation:
             self._open_timer(entity)
         elif entity.is_automation:
             self._push(Frame(FrameKind.AUTOMATION, entity=entity))
+        elif entity.is_script:
+            self._push(Frame(FrameKind.SCRIPT, entity=entity))
         elif entity.domain == "cover":
             self._push(Frame(FrameKind.COVER_ACTIONS, entity=entity))
         elif entity.domain == "fan" and entity.supports_fan_speed:
@@ -1429,7 +1459,7 @@ class Navigation:
             viewing_detail = (
                 frame.kind in (FrameKind.TIMER, FrameKind.CLIMATE_DETAIL, FrameKind.ENTITY_MENU,
                                FrameKind.MEDIA, FrameKind.ALARM, FrameKind.FAN,
-                               FrameKind.AUTOMATION)
+                               FrameKind.AUTOMATION, FrameKind.SCRIPT)
                 and frame.entity is not None
                 and frame.entity.entity_id == entity_id
             )
@@ -1522,7 +1552,7 @@ def layout_room(
     total_keys: int,
     cols: int,
     page: int,
-    automations: list[Action] | None = None,
+    routines: list[Action] | None = None,
 ) -> dict[int, Action]:
     """Lay out a room: Back at key 0, controls top, read-only sensors bottom.
 
@@ -1531,18 +1561,18 @@ def layout_room(
     the rows they need (Back rides in the first) and the band gets what is left,
     up to the rows the sensors would need to all show at once.
 
-    The room's automations get pages of their own at the *end* of the cycle, so
-    the devices keep the first page(s) to themselves. The deck's bottom-right
-    cell becomes a cycling page key (advances, wrapping back to the first page)
-    captioned with the position whenever the room needs more than one page —
-    either because the sensor band overflows (it then pages in place, controls
-    staying put) or because there are automations to reach.
+    The room's routines (its automations and scripts) get pages of their own at
+    the *end* of the cycle, so the devices keep the first page(s) to themselves.
+    The deck's bottom-right cell becomes a cycling page key (advances, wrapping
+    back to the first page) captioned with the position whenever the room needs
+    more than one page — either because the sensor band overflows (it then pages
+    in place, controls staying put) or because there are routines to reach.
 
     Only when the controls alone need every row — leaving nothing for a band —
     does the whole view fall back to a paginated sequential layout (controls,
-    then sensors, then automations) so nothing is lost.
+    then sensors, then routines) so nothing is lost.
     """
-    automations = automations or []
+    routines = routines or []
     back: dict[int, Action] = {0: Action(ActionKind.BACK)}
     rows = total_keys // cols
 
@@ -1550,30 +1580,30 @@ def layout_room(
     sensor_rows = min(_ceil_div(len(readouts), cols), rows - control_rows) if readouts else 0
     sensor_start = (rows - sensor_rows) * cols
 
-    # One page key serves the band and the automation pages alike; it costs the
+    # One page key serves the band and the routine pages alike; it costs the
     # bottom-right cell, which is the band's last cell whenever there is a band.
     band_slots = list(range(sensor_start, total_keys))
-    needs_page_key = bool(automations) or len(readouts) > len(band_slots)
+    needs_page_key = bool(routines) or len(readouts) > len(band_slots)
     page_key = total_keys - 1 if needs_page_key else None
     control_slots = [k for k in range(1, sensor_start) if k != page_key]
     sensor_slots = [k for k in band_slots if k != page_key]
 
     if (readouts and not sensor_slots) or len(controls) > len(control_slots):
         # No row left for a band (or a one-cell band that the page key claims).
-        return layout_page(controls + readouts + automations, total_keys, back, page)
+        return layout_page(controls + readouts + routines, total_keys, back, page)
 
     band_pages = _ceil_div(len(readouts), len(sensor_slots)) if readouts else 1
-    per_automation_page = total_keys - 2  # keys 1.. , with Back and the page key reserved
-    automation_pages = _ceil_div(len(automations), per_automation_page) if automations else 0
-    page_count = band_pages + automation_pages
+    per_routine_page = total_keys - 2  # keys 1.. , with Back and the page key reserved
+    routine_pages = _ceil_div(len(routines), per_routine_page) if routines else 0
+    page_count = band_pages + routine_pages
     page = max(0, min(page, page_count - 1))
     pager = Action(ActionKind.PAGE, delta=1,
                    data={"page": page, "count": page_count, "cycle": True})
 
     result = dict(back)
-    if page >= band_pages:  # the automation page(s), last in the room's cycle
-        start = (page - band_pages) * per_automation_page
-        for slot, action in zip(range(1, page_key), automations[start : start + per_automation_page]):
+    if page >= band_pages:  # the routine page(s), last in the room's cycle
+        start = (page - band_pages) * per_routine_page
+        for slot, action in zip(range(1, page_key), routines[start : start + per_routine_page]):
             result[slot] = action
         result[page_key] = pager
         return result

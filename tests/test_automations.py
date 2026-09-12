@@ -93,20 +93,20 @@ def test_icon_follows_enabled_state():
 # -- the room layout ----------------------------------------------------------
 
 def test_automations_stay_off_the_device_page():
-    key_map = layout_room(_ctrl(3), _sensors(4), TOTAL, COLS, page=0, automations=_autos(2))
+    key_map = layout_room(_ctrl(3), _sensors(4), TOTAL, COLS, page=0, routines=_autos(2))
     assert _ids(key_map, "automation") == []
     assert _ids(key_map, "light") == [f"light.c{i}" for i in range(3)]
     assert len(_ids(key_map, "sensor")) == 4
 
 
 def test_a_fitting_room_still_gets_a_page_key_for_its_automations():
-    key_map = layout_room(_ctrl(3), _sensors(4), TOTAL, COLS, page=0, automations=_autos(2))
+    key_map = layout_room(_ctrl(3), _sensors(4), TOTAL, COLS, page=0, routines=_autos(2))
     assert set(_page_keys(key_map)) == {31}
     assert key_map[31].data == {"page": 0, "count": 2, "cycle": True}
 
 
 def test_automations_own_the_last_page():
-    key_map = layout_room(_ctrl(3), _sensors(4), TOTAL, COLS, page=1, automations=_autos(2))
+    key_map = layout_room(_ctrl(3), _sensors(4), TOTAL, COLS, page=1, routines=_autos(2))
     assert key_map[0].kind is ActionKind.BACK
     assert _ids(key_map, "automation") == ["automation.a0", "automation.a1"]
     assert _ids(key_map, "light") == [] and _ids(key_map, "sensor") == []
@@ -115,7 +115,7 @@ def test_automations_own_the_last_page():
 
 def test_automations_follow_the_band_pages():
     """A sensor-heavy room pages its band first, then reaches the automations."""
-    pages = [layout_room(_ctrl(2), _sensors(50), TOTAL, COLS, page=p, automations=_autos(2))
+    pages = [layout_room(_ctrl(2), _sensors(50), TOTAL, COLS, page=p, routines=_autos(2))
              for p in range(4)]
     assert [len(_ids(p, "sensor")) for p in pages] == [23, 23, 4, 0]  # 3 band pages, then autos
     assert _ids(pages[3], "automation") == ["automation.a0", "automation.a1"]
@@ -126,25 +126,25 @@ def test_automations_follow_the_band_pages():
 def test_more_automations_than_one_page_holds():
     seen = set()
     for page in range(1, 4):
-        key_map = layout_room(_ctrl(2), [], TOTAL, COLS, page=page, automations=_autos(70))
+        key_map = layout_room(_ctrl(2), [], TOTAL, COLS, page=page, routines=_autos(70))
         assert key_map[31].data == {"page": page, "count": 4, "cycle": True}
         seen |= set(_ids(key_map, "automation"))
     assert seen == {f"automation.a{i}" for i in range(70)}  # 30 + 30 + 10, nothing stranded
 
 
 def test_page_clamped_to_the_last_automation_page():
-    high = layout_room(_ctrl(2), _sensors(4), TOTAL, COLS, page=99, automations=_autos(2))
-    last = layout_room(_ctrl(2), _sensors(4), TOTAL, COLS, page=1, automations=_autos(2))
+    high = layout_room(_ctrl(2), _sensors(4), TOTAL, COLS, page=99, routines=_autos(2))
+    last = layout_room(_ctrl(2), _sensors(4), TOTAL, COLS, page=1, routines=_autos(2))
     assert _ids(high, "automation") == _ids(last, "automation")
 
 
 def test_dense_room_falls_back_to_a_flat_list_keeping_automations():
     # 31 controls leave no row for a band: flat Prev/Next list, nothing lost.
-    key_map = layout_room(_ctrl(31), _sensors(8), TOTAL, COLS, page=0, automations=_autos(2))
+    key_map = layout_room(_ctrl(31), _sensors(8), TOTAL, COLS, page=0, routines=_autos(2))
     seen = set()
     for page in range(4):
         seen |= set(_ids(layout_room(_ctrl(31), _sensors(8), TOTAL, COLS, page=page,
-                                     automations=_autos(2)), "automation"))
+                                     routines=_autos(2)), "automation"))
     assert key_map[0].kind is ActionKind.BACK
     assert seen == {"automation.a0", "automation.a1"}
 

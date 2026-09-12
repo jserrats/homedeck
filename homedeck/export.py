@@ -69,11 +69,11 @@ def export_views(rooms, navigation, display: ExportDisplay, out_dir: str) -> lis
         display.grid().save(path)
         written.append(path)
 
-        if any(e.is_automation for e in room.entities):
+        if any(e.is_routine for e in room.entities):
             display.reset()
-            # The automations sit on the last page; a big index is clamped to it.
+            # The automations/scripts sit on the last page; a big index clamps to it.
             navigation.open_room(room, page=len(room.entities))
-            path = out / f"{i:02d}-{_slug(room.name)}-automations.png"
+            path = out / f"{i:02d}-{_slug(room.name)}-routines.png"
             display.grid().save(path)
             written.append(path)
 

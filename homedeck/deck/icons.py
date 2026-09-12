@@ -76,7 +76,9 @@ DOMAIN_ICONS: dict[str, str] = {
     "timer": "timer-outline",
     "media_player": "cast",
     "alarm_control_panel": "shield-home-outline",
+    "siren": "bullhorn",
     "automation": "robot",
+    "script": "script-text",
 }
 
 # More specific defaults keyed by (domain, device_class).
@@ -203,6 +205,18 @@ def resolve_icon_name(
     if domain == "automation":
         # on = enabled, off = disabled (HA's own automation icons).
         name = "robot-off" if (state or "").lower() == "off" else "robot"
+        if name in codepoints:
+            return name
+
+    if domain == "siren":
+        # Filled while it is sounding, outlined when quiet.
+        name = "bullhorn" if (state or "").lower() == "on" else "bullhorn-outline"
+        if name in codepoints:
+            return name
+
+    if domain == "script":
+        # Running scripts get the play variant; idle ones HA's plain script icon.
+        name = "script-text-play" if (state or "").lower() == "on" else "script-text"
         if name in codepoints:
             return name
 

@@ -174,6 +174,7 @@ def run_deck(config: Config) -> int:
         calendars=calendars, on_calendar_events=client.get_calendar_events,
         agenda_days=config.agenda_days,
         on_logbook=client.get_logbook, on_reload=reload_model,
+        on_statistics=client.get_statistics, on_history=client.get_numeric_history,
         on_rotate=deck.cycle_rotation, on_brightness=deck.cycle_brightness,
         on_media_image=client.get_media_image,
         tz=tz,

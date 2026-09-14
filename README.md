@@ -11,8 +11,9 @@ automation), and a **long press** (hold ≈0.5 s) opens the entity's
 controls"** hint so you know the long-press is armed. Most controllable types open a **combined
 control view** where every control sits on the first screen alongside a single **History** tile
 (that opens the full-screen timeline when pressed). Lights are the exception — their pickers each
-need the whole screen — so they open a small **menu of buttons** instead; read-only entities
-(sensors, buttons…) skip straight to History.
+need the whole screen — so they open a small **menu of buttons** instead; a **numeric sensor**
+offers **Graph** and **History**, and every other read-only entity (text sensors, buttons…) skips
+straight to History.
 
 - **Lights** — a menu with **Brightness**, **Color** and **Warmth** (only those the light
   supports), plus **Toggle**. Each opens a full-deck picker: a brightness scale (10→100%) in the
@@ -59,6 +60,19 @@ need the whole screen — so they open a small **menu of buttons** instead; read
     press runs it** (`script.turn_on`) — and cancels the run if one is already in progress. A
     **long press** opens its controls: **Run**, **Cancel** (only while it's running) and
     **History**.
+- **Graph** (numeric sensors) — opens a **fullscreen chart** of the sensor's recent readings,
+  filling the grid below a row of controls. A strip across the top reports the window's
+  **Now**, **Min**, **Avg** and **Max** (on a portrait deck the stats wrap to a second line), the
+  axis is labelled down the left, and clock times run along the bottom (weekday names on the
+  longest window). The **average is time-weighted** — Home Assistant records a row only when a
+  value *changes*, so a ten-second blip would otherwise count as heavily as a reading that held
+  all afternoon. Tap **1h**, **4h**, **12h**, **24h** or **1w** to change the span — it refetches in
+  place, so *Back* still leaves the chart rather than stepping back through windows — and the
+  choice **persists** to the state file. Readings come from Home Assistant's **long-term
+  statistics** (the 5-minute and hourly aggregates its own charts use) for the longer windows,
+  falling back to the **raw state history** for sensors that keep no statistics; short windows
+  read the raw history directly. Gaps in the recording stay gaps — the line breaks rather than
+  bridging them. The chart is a snapshot taken when you open it; tap a window to refresh.
 - **History** (any entity) — opens a fullscreen timeline of recent state changes from the HA
   logbook, newest first, each showing the **clock time**, the new state, and **what triggered
   it** (an automation, a user, or another entity). Times use Home Assistant's own timezone (read
@@ -72,7 +86,8 @@ need the whole screen — so they open a small **menu of buttons** instead; read
   when it has any, so one key walks the whole room: sensor pages first, automations and scripts
   last, then back to the top. **Timestamp/date sensors** (device class `timestamp`/`date`, or any
   sensor whose value is an ISO datetime like `2026-07-23T14:49:00+00:00`) show a **human relative
-  time** instead of the raw string — `5m ago`, `in 8h`, `in 2d` — under a clock icon.
+  time** instead of the raw string — `5m ago`, `in 8h`, `in 2d` — under a clock icon. **Hold** a
+  sensor whose reading is a plain number to chart it (see **Graph** above).
 - **Covers, doors & windows** — all covers (blinds, shades, garage doors…) and
   door/window/garage/gate sensors show **green when closed** and **orange when open** (yellow
   while moving); door-like ones also switch between the closed and open icon.
@@ -299,6 +314,7 @@ journalctl -u homedeck -f          # logs
 | `homedeck/ha/client.py` | WebSocket client (commands + event listener) |
 | `homedeck/ha/model.py` | Rooms/devices, area resolution, state→color/value logic |
 | `homedeck/ha/calendar.py` | Calendar entities + event parsing/labelling |
+| `homedeck/ha/graph.py` | Numeric sensor series: history/statistics parsing + bucketing |
 | `homedeck/deck/icons.py` | MDI icon lookup + per-domain defaults |
 | `homedeck/deck/renderer.py` | Key image rendering (Pillow) |
 | `homedeck/deck/controller.py` | Stream Deck hardware control |

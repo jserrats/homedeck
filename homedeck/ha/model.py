@@ -816,6 +816,25 @@ class DeviceEntity:
         return self.domain in HISTORY_DOMAINS
 
     @property
+    def is_numeric_sensor(self) -> bool:
+        """A sensor whose reading is a plain number, so it can be plotted.
+
+        Timestamp/date sensors are excluded — they read as "in 2h", not a value.
+        An unavailable sensor still counts when it carries a unit, so the Graph
+        option doesn't vanish on a momentary dropout.
+        """
+        if self.domain != "sensor":
+            return False
+        if self._sensor_datetime() is not None:
+            return False
+        try:
+            float(self.state)
+        except (TypeError, ValueError):
+            return (self.status is Status.UNAVAILABLE
+                    and bool(self.attributes.get("unit_of_measurement")))
+        return True
+
+    @property
     def has_long_press(self) -> bool:
         """Every in-scope entity opens a long-press options menu (History at least)."""
         return True

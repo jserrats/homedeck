@@ -7,7 +7,7 @@ usable without any hardware attached (e.g. for ``--export``).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, tzinfo
 from functools import lru_cache
 from pathlib import Path
 
@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from . import icons
 from ..color import hs_to_rgb, kelvin_to_rgb, scale
 from ..ha.calendar import CalendarEvent
+from ..ha.graph import Series
 from ..ha.history import HistoryEvent
 from ..ha.model import BUTTON_DOMAINS, CLIMATE_DOMAINS, DeviceEntity, Floor, Room, Status, _format_number
 from ..ha.weather import ForecastDay, Weather
@@ -47,6 +48,8 @@ CALENDAR_HEADER_BG = (56, 28, 38)  # agenda day-column header (dark plum)
 SETTINGS_ACCENT = (156, 163, 175)  # "Settings" folder (slate grey)
 CLIMATE_ICON = (125, 200, 247)    # active fan / climate icon (sky blue)
 NAV_COLOR = (210, 210, 214)
+GRAPH_ACCENT = (125, 200, 247)   # sensor graph line (sky blue, matches weather)
+GRAPH_GRID = (52, 52, 60)        # faint horizontal gridlines behind the plot
 DOT_LIGHT = (255, 210, 0)        # room indicator: a light is on (yellow)
 DOT_PRESENCE = (168, 85, 247)    # room indicator: presence detected (purple)
 
@@ -605,6 +608,141 @@ class KeyRenderer:
         self._draw_label(draw, label, y=int(self.h * 0.60), size=12, color=(255, 255, 255))
         return img
 
+    # -- sensor graph -------------------------------------------------------
+
+    def graph_panel(self, series: Series, cols: int, rows: int, *,
+                    title: str, range_label: str, tz: tzinfo | None = None) -> Image.Image:
+        """The whole chart, at the size of the ``cols`` x ``rows`` block of keys.
+
+        Drawn once per render and sliced up by :meth:`graph_tile`, the same way
+        album art is spread across the media mosaic. The readings are labelled
+        inside the panel so the surrounding keys stay free for controls.
+        """
+        width, height = self.w * cols, self.h * rows
+        img = Image.new("RGB", (width, height), BG)
+        draw = ImageDraw.Draw(img)
+
+        # The header holds the name, the current reading, Min/Avg/Max and the
+        # window. Each label is kept inside a single key so the physical gaps
+        # between keys never cut through a word — which also means a narrow
+        # (portrait) deck can't fit them all on one line, and wraps to two.
+        stats = series.stat_labels()
+        one_line = cols >= 3 + len(stats)  # name + reading + stats, then the window
+
+        left = int(self.w * 0.62)          # room for the value labels
+        right = width - int(self.w * 0.14)
+        top = int(self.h * (0.56 if one_line else 1.62))
+        bottom = height - int(self.h * 0.30)  # room for the time ticks
+        font = self._label_font(max(9, int(self.h * 0.12)))
+
+        self._draw_cell_label(draw, title, cell=0, y=int(self.h * 0.06),
+                              size=max(9, int(self.h * 0.12)), color=NAV_COLOR, max_lines=2)
+        # The reading is captioned like the stats beside it, so the strip reads
+        # as one row of Now / Min / Avg / Max rather than a bare number.
+        self._draw_cell_label(draw, "Now", cell=1, y=int(self.h * 0.06),
+                              size=max(9, int(self.h * 0.11)), color=NAV_COLOR, max_lines=1)
+        self._draw_cell_value(draw, series.latest_label(), cell=1, y=int(self.h * 0.22),
+                              size=int(self.h * 0.26), color=TEXT)
+        draw.text((right, int(self.h * 0.10)), range_label,
+                  font=self._value_font(max(10, int(self.h * 0.16))), fill=GRAPH_ACCENT, anchor="ra")
+
+        # Min / Avg / Max: beside the reading when there's room, else on their
+        # own line under it.
+        stat_cell = 2 if one_line else 0
+        stat_y = 0 if one_line else self.h  # a whole cell down, never across a seam
+        for i, (caption, value) in enumerate(stats):
+            if stat_cell + i >= cols:
+                break
+            self._draw_cell_label(draw, caption, cell=stat_cell + i, y=stat_y + int(self.h * 0.06),
+                                  size=max(9, int(self.h * 0.11)), color=NAV_COLOR, max_lines=1)
+            self._draw_cell_value(draw, value, cell=stat_cell + i, y=stat_y + int(self.h * 0.22),
+                                  size=int(self.h * 0.22), color=TEXT)
+
+        # Gridlines, with the range's low/mid/high labelled down the left edge.
+        low_label, mid_label, high_label = series.value_labels()
+        for pos, text in ((0.0, high_label), (0.5, mid_label), (1.0, low_label)):
+            y = top + (bottom - top) * pos
+            draw.line([(left, y), (right, y)], fill=GRAPH_GRID, width=1)
+            draw.text((left - int(self.w * 0.06), y), text, font=font, fill=NAV_COLOR, anchor="rm")
+
+        # Time ticks along the bottom.
+        for pos, text in series.time_labels(tz):
+            x = left + (right - left) * pos
+            anchor = "la" if pos == 0.0 else ("ra" if pos == 1.0 else "ma")
+            draw.text((x, bottom + int(self.h * 0.06)), text, font=font, fill=NAV_COLOR, anchor=anchor)
+
+        self._draw_plot(draw, series, left, top, right, bottom)
+        return img
+
+    def _draw_plot(self, draw, series: Series, left: int, top: int, right: int, bottom: int) -> None:
+        """The filled area and its line, one run per unbroken stretch of data."""
+        low, high = series.bounds()
+        span = high - low
+        columns = series.columns(max(1, right - left))
+
+        def point(i: int, value: float) -> tuple[float, float]:
+            return (left + i, bottom - (value - low) / span * (bottom - top))
+
+        fill = scale(GRAPH_ACCENT, 0.26)
+        stroke = max(2, int(self.h * 0.03))
+        last: tuple[float, float] | None = None
+        for run in _runs(columns):
+            pts = [point(i, v) for i, v in run]
+            if len(pts) > 1:
+                draw.polygon([(pts[0][0], bottom), *pts, (pts[-1][0], bottom)], fill=fill)
+                draw.line(pts, fill=GRAPH_ACCENT, width=stroke, joint="curve")
+            last = pts[-1]
+        if last is not None:  # mark where the series ends (the current reading)
+            r = max(3, int(self.h * 0.045))
+            draw.ellipse([last[0] - r, last[1] - r, last[0] + r, last[1] + r], fill=GRAPH_ACCENT)
+
+    def graph_tile(self, panel: Image.Image, cell: tuple[int, int]) -> Image.Image:
+        """One ``(row, col)`` crop of the panel — mirrors :meth:`media_art_tile`."""
+        r, c = cell
+        return panel.crop((c * self.w, r * self.h, (c + 1) * self.w, (r + 1) * self.h))
+
+    def graph_range_button(self, label: str, active: bool) -> Image.Image:
+        """A time-window button ("1h" … "1w"); the selected one is highlighted."""
+        bg = RESERVED_BG if active else BG
+        img = Image.new("RGB", (self.w, self.h), bg)
+        draw = ImageDraw.Draw(img)
+        color = GRAPH_ACCENT if active else NAV_COLOR
+        if active:
+            draw.rectangle([1, 1, self.w - 2, self.h - 2], outline=color, width=max(2, int(self.h * 0.03)))
+        self._draw_label(draw, "last", y=int(self.h * 0.20), size=11, color=NAV_COLOR, max_lines=1)
+        draw.text((self.w / 2, self.h * 0.58), label, font=self._value_font(int(self.h * 0.34)),
+                  fill=color, anchor="mm")
+        return img
+
+    def graph_empty(self, entity: DeviceEntity, range_label: str) -> Image.Image:
+        """Shown in place of the chart when no readings came back for the window."""
+        img, draw = self._canvas()
+        self._draw_glyph(draw, icons.glyph("chart-line"), size=int(self.h * 0.34),
+                         cy=int(self.h * 0.28), color=UNAVAILABLE_ICON)
+        self._draw_label(draw, "No data", y=int(self.h * 0.50), size=13, color=NAV_COLOR, max_lines=1)
+        self._draw_label(draw, f"last {range_label}", y=int(self.h * 0.72), size=10,
+                         color=UNAVAILABLE_ICON, max_lines=1)
+        return img
+
+    def _draw_cell_value(self, draw, text: str, *, cell: int, y: int, size: int, color=TEXT) -> None:
+        """A reading sized to fit inside one key of a multi-key panel."""
+        pad = int(self.w * 0.08)
+        font = self._fit_value_font(text, max_size=size, max_width=self.w - 2 * pad)
+        draw.text((cell * self.w + pad, y), text, font=font, fill=color, anchor="la")
+
+    def _draw_cell_label(self, draw, text: str, *, cell: int, y: int, size: int,
+                         color=TEXT, max_lines: int = 2) -> None:
+        """Wrap ``text`` into the width of one key of a multi-key panel.
+
+        Panel labels have to respect the deck's physical key gaps — a string that
+        runs past a cell edge gets sliced in half by the bezel.
+        """
+        font = self._label_font(size)
+        pad = int(self.w * 0.08)
+        x = cell * self.w + pad
+        for i, line in enumerate(_wrap(text, font, self.w - 2 * pad, max_lines)):
+            draw.text((x, y + i * (size + 2)), line, font=font, fill=color, anchor="la")
+
     def blank(self) -> Image.Image:
         img, _ = self._canvas()
         return img
@@ -614,6 +752,26 @@ class KeyRenderer:
         self._draw_glyph(draw, icons.glyph("lan-disconnect"), size=int(self.h * 0.34), cy=int(self.h * 0.34), color=color)
         self._draw_label(draw, text, y=int(self.h * 0.60), size=12, color=color, max_lines=2)
         return img
+
+
+def _runs(columns: list[float | None]) -> list[list[tuple[int, float]]]:
+    """Split a column series into unbroken stretches, dropping the gaps.
+
+    A gap (no readings recorded) should leave a hole in the chart rather than a
+    straight line bridging it, so each stretch is filled and stroked on its own.
+    """
+    runs: list[list[tuple[int, float]]] = []
+    current: list[tuple[int, float]] = []
+    for i, value in enumerate(columns):
+        if value is None:
+            if current:
+                runs.append(current)
+                current = []
+            continue
+        current.append((i, value))
+    if current:
+        runs.append(current)
+    return runs
 
 
 def _wrap(text: str, font: ImageFont.FreeTypeFont, max_width: int, max_lines: int) -> list[str]:

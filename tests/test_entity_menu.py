@@ -55,10 +55,16 @@ def test_plain_fan_has_toggle_and_history():
     assert _menu_targets(fan) == ["toggle", "history"]
 
 
-def test_sensor_menu_is_history_only():
-    # a read-only sensor can't be toggled, so no Toggle option
-    sensor = DeviceEntity("sensor.t", "T", "sensor", "21", attributes={"unit_of_measurement": "°C"})
+def test_text_sensor_menu_is_history_only():
+    # a read-only sensor can't be toggled, so no Toggle option -- and a text
+    # reading has nothing to plot, so no Graph either
+    sensor = DeviceEntity("sensor.washer", "Washer", "sensor", "running")
     assert _menu_targets(sensor) == ["history"]
+
+
+def test_numeric_sensor_menu_offers_a_graph():
+    sensor = DeviceEntity("sensor.t", "T", "sensor", "21", attributes={"unit_of_measurement": "°C"})
+    assert _menu_targets(sensor) == ["graph", "history"]
 
 
 # -- fan / cover open a combined control view directly ------------------------
@@ -158,10 +164,10 @@ def test_cover_action_button_fires_and_stays():
     assert nav.stack[-1].kind is FrameKind.COVER_ACTIONS  # controls stay open
 
 
-# -- read-only sensor: long press -> history, short press -> nothing ----------
+# -- read-only sensor: long press -> options, short press -> nothing ----------
 
 @requires_assets
-def test_sensor_long_press_history_short_press_noop(monkeypatch):
+def test_sensor_long_press_opens_menu_short_press_noop(monkeypatch):
     clock = {"t": 100.0}
     monkeypatch.setattr(nav_mod.time, "monotonic", lambda: clock["t"])
     calls = []
@@ -180,8 +186,9 @@ def test_sensor_long_press_history_short_press_noop(monkeypatch):
     clock["t"] += 1.0
     nav.handle_press(key, True)
     clock["t"] += 1.0
-    nav.handle_press(key, False)          # long press: single option -> History
-    assert nav.stack[-1].kind is FrameKind.HISTORY
+    nav.handle_press(key, False)          # long press: Graph + History -> the menu
+    assert nav.stack[-1].kind is FrameKind.ENTITY_MENU
+    assert _menu_targets(sensor) == ["graph", "history"]
 
 
 @requires_assets

@@ -36,6 +36,20 @@ ConnectionCallback = Callable[[bool], None]
 RECONNECT_DELAY_S = 5.0
 
 
+def _rows_for(result: object, entity_id: str) -> list[dict]:
+    """Pull one entity's rows out of a ``{entity_id: [row, ...]}`` response.
+
+    Both the history and statistics commands key their result by entity; we only
+    ever ask for one, so an unkeyed single entry is accepted too.
+    """
+    if not isinstance(result, dict):
+        return []
+    rows = result.get(entity_id)
+    if rows is None and len(result) == 1:
+        rows = next(iter(result.values()))
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
 class HaClient:
     def __init__(self, url: str, token: str) -> None:
         self._url = url
@@ -195,6 +209,41 @@ class HaClient:
             logger.info("Logbook unavailable for %s (%s)", entity_id, exc)
             return []
         return result if isinstance(result, list) else []
+
+    def get_statistics(self, entity_id: str, hours: int, period: str) -> list[dict]:
+        """Long-term statistics for an entity via ``recorder/statistics_during_period``.
+
+        ``period`` is "5minute" or "hour". Returns [] when the sensor keeps no
+        long-term statistics (no ``state_class``) or the recorder is unavailable,
+        so callers can fall back to the raw state history.
+        """
+        start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        try:
+            result = self._command(
+                "recorder/statistics_during_period", start_time=start,
+                statistic_ids=[entity_id], period=period, types=["mean", "min", "max"],
+            )
+        except Exception as exc:  # noqa: BLE001 - statistics are best-effort
+            logger.info("Long-term statistics unavailable for %s (%s)", entity_id, exc)
+            return []
+        return _rows_for(result, entity_id)
+
+    def get_numeric_history(self, entity_id: str, hours: int) -> list[dict]:
+        """Raw state history for an entity via ``history/history_during_period``.
+
+        Attributes are dropped and the response minimised: a graph only needs the
+        state and its timestamp. Returns [] if history isn't available.
+        """
+        start = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        try:
+            result = self._command(
+                "history/history_during_period", start_time=start, entity_ids=[entity_id],
+                minimal_response=True, no_attributes=True, significant_changes_only=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - history is best-effort
+            logger.info("History unavailable for %s (%s)", entity_id, exc)
+            return []
+        return _rows_for(result, entity_id)
 
     def get_media_image(self, entity_picture: str) -> bytes | None:
         """Fetch media artwork bytes for a media_player's ``entity_picture``.

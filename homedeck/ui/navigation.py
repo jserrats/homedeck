@@ -42,6 +42,16 @@ from ..ha.calendar import (
     next_event,
     parse_events,
 )
+from ..ha.graph import (
+    DEFAULT_RANGE,
+    TIMEFRAMES,
+    Series,
+    Timeframe,
+    build_series,
+    samples_from_history,
+    samples_from_statistics,
+    timeframe,
+)
 from ..ha.history import HistoryEvent, parse_logbook
 from ..ha.model import DeviceEntity, Floor, Room, Status
 from ..ha.weather import ForecastDay, Weather, parse_forecast
@@ -76,6 +86,7 @@ class FrameKind(Enum):
     CALENDAR = auto()         # agenda: upcoming events across the chosen calendars
     CALENDAR_PICKER = auto()  # multi-select: which calendars feed the tile
     HISTORY = auto()
+    GRAPH = auto()          # numeric sensor: a chart of its recent readings
     TIMER = auto()
     SETTINGS = auto()
 
@@ -88,6 +99,7 @@ class Frame:
     entity: DeviceEntity | None = None  # entity a menu/picker/detail view acts on
     forecast: list[ForecastDay] | None = None  # days shown in a WEATHER frame
     history: list[HistoryEvent] | None = None  # events shown in a HISTORY frame
+    series: Series | None = None  # readings plotted in a GRAPH frame (None = no data)
     events: list[CalendarEvent] | None = None  # events shown in a CALENDAR frame
     data: dict | None = None  # PICKER: {"type": "brightness"|"color"|...}
 
@@ -112,6 +124,8 @@ class ActionKind(Enum):
     WEATHER_CELL = auto()  # one cell of the full-matrix forecast (day/icon/min/max)
     HISTORY_TITLE = auto() # header of the history view (entity name)
     HISTORY_EVENT = auto() # one timeline entry in the history view
+    GRAPH_CELL = auto()    # one cell of the sensor-graph mosaic (non-interactive)
+    GRAPH_RANGE = auto()   # a time-window button in the graph view (1h … 1w)
     CALENDAR_DAY = auto()     # agenda column header: weekday + date (non-interactive)
     CALENDAR_EVENT = auto()   # one entry in the agenda view (non-interactive)
     CALENDAR_TOGGLE = auto()  # a calendar in the picker (tap toggles it on/off)
@@ -169,6 +183,8 @@ class Navigation:
         agenda_days: int = AGENDA_DAYS,
         on_forecast: Callable[[str], list[dict]] | None = None,
         on_logbook: Callable[[str], list[dict]] | None = None,
+        on_statistics: Callable[[str, int, str], list[dict]] | None = None,
+        on_history: Callable[[str, int], list[dict]] | None = None,
         on_reload: Callable[[], None] | None = None,
         on_rotate: Callable[[], None] | None = None,
         on_brightness: Callable[[], None] | None = None,
@@ -185,6 +201,8 @@ class Navigation:
         self.agenda_days = max(1, agenda_days)  # days of agenda to fetch and lay out
         self.on_forecast = on_forecast
         self.on_logbook = on_logbook
+        self.on_statistics = on_statistics  # fn(entity_id, hours, period) -> statistics rows
+        self.on_history = on_history        # fn(entity_id, hours) -> raw state-history rows
         self.on_reload = on_reload
         self.on_rotate = on_rotate
         self.on_brightness = on_brightness
@@ -333,6 +351,15 @@ class Navigation:
             return self.renderer.history_title(action.entity)
         if action.kind is ActionKind.HISTORY_EVENT:
             return self.renderer.history_event(action.event)
+        if action.kind is ActionKind.GRAPH_CELL:
+            d = action.data or {}
+            panel = d.get("panel")
+            if panel is None:  # no readings for this window
+                return self.renderer.graph_empty(action.entity, d.get("range", ""))
+            return self.renderer.graph_tile(panel, d["cell"])
+        if action.kind is ActionKind.GRAPH_RANGE:
+            d = action.data or {}
+            return self.renderer.graph_range_button(d["range"], d.get("active", False))
         if action.kind is ActionKind.TIMER_STATUS:
             return self.renderer.timer_status(action.entity)
         if action.kind is ActionKind.TIMER_ACTION:
@@ -436,6 +463,8 @@ class Navigation:
             return self._calendar_picker_key_map(frame)
         if frame.kind is FrameKind.HISTORY:
             return self._history_key_map(frame)
+        if frame.kind is FrameKind.GRAPH:
+            return self._graph_key_map(frame)
         if frame.kind is FrameKind.TIMER:
             return self._timer_key_map(frame)
         if frame.kind is FrameKind.SETTINGS:
@@ -616,6 +645,8 @@ class Navigation:
                     opts.append(item("temperature", "Warmth", "thermometer-lines"))
             elif d == "lock":
                 opts.append(item("lock_open", "Open Door", "door-open"))
+            if entity.is_numeric_sensor:
+                opts.append(item("graph", "Graph", "chart-line"))
         opts.append(item("history", "History", "history"))
         return opts
 
@@ -793,6 +824,50 @@ class Navigation:
             if key >= self.display.key_count:
                 break
             result[key] = Action(ActionKind.HISTORY_EVENT, event=event)
+        return result
+
+    def _graph_key_map(self, frame: Frame) -> dict[int, Action]:
+        """Sensor graph: a control band across the top, the chart filling the rest.
+
+        On an XL that is ``[Back][1h][4h][12h][24h][1w][History]`` on row 0 and an
+        8x3 chart below; rotated to portrait the band wraps onto a second row and
+        the chart takes what's left. The panel is drawn **once** here and shared
+        by every cell, since ``_image_for`` runs per key.
+        """
+        entity = frame.entity
+        key_count = self.display.key_count
+        cols = getattr(self.display, "cols", 0) or key_count
+        rows = key_count // cols if cols else 1
+        selected = (frame.data or {}).get("range", DEFAULT_RANGE)
+
+        band: list[Action] = [Action(ActionKind.BACK)]
+        band += [
+            Action(ActionKind.GRAPH_RANGE, entity=entity,
+                   data={"range": tf.label, "active": tf.label == selected})
+            for tf in TIMEFRAMES
+        ]
+        band.append(self._history_tile(entity))
+
+        band_rows = -(-len(band) // cols)  # ceil
+        if frame.series is None or rows - band_rows < 1:
+            # No readings, or a deck too small for a mosaic: a flat list instead.
+            tiles = band[1:] + [Action(ActionKind.GRAPH_CELL, entity=entity,
+                                       data={"range": selected})]
+            return layout_page(tiles, key_count, {0: Action(ActionKind.BACK)}, frame.page)
+
+        result: dict[int, Action] = {}
+        self._place(result, band, 0)
+        graph_rows = rows - band_rows
+        panel = self.renderer.graph_panel(
+            frame.series, cols, graph_rows,
+            title=entity.name if entity is not None else "",
+            range_label=selected, tz=self.tz,
+        )
+        for r in range(graph_rows):
+            for c in range(cols):
+                result[(band_rows + r) * cols + c] = Action(
+                    ActionKind.GRAPH_CELL, entity=entity,
+                    data={"panel": panel, "cell": (r, c), "range": selected})
         return result
 
     def _weather_key_map(self, frame: Frame) -> dict[int, Action]:
@@ -1122,8 +1197,11 @@ class Navigation:
                              ActionKind.CLIMATE_STATUS, ActionKind.MEDIA_ART,
                              ActionKind.MEDIA_TEXT, ActionKind.MEDIA_VOLUME,
                              ActionKind.ALARM_STATUS, ActionKind.CLOCK, ActionKind.DATE,
-                             ActionKind.CALENDAR_DAY, ActionKind.CALENDAR_EVENT):
-            return  # forecast/history/status/media-info/clock tiles are not interactive
+                             ActionKind.CALENDAR_DAY, ActionKind.CALENDAR_EVENT,
+                             ActionKind.GRAPH_CELL):
+            return  # forecast/history/graph/status/media-info/clock tiles are not interactive
+        elif action.kind is ActionKind.GRAPH_RANGE:
+            self._set_graph_range((action.data or {}).get("range"))
         elif action.kind is ActionKind.MENU_ITEM:
             self._dispatch_menu_target(action.entity, (action.data or {}).get("target"))
         elif action.kind is ActionKind.PICKER_CELL:
@@ -1255,6 +1333,8 @@ class Navigation:
             self._invoke(entity)  # same as a single press; stays in the view (tile updates live)
         elif target == "history":
             self._open_history(entity)
+        elif target == "graph":
+            self._open_graph(entity)
         elif target == "brightness":
             self._push(Frame(FrameKind.PICKER, entity=entity, data={"type": "brightness"}))
         elif target == "color":
@@ -1329,6 +1409,56 @@ class Navigation:
             except Exception as exc:  # noqa: BLE001 - history is best-effort
                 logger.warning("Logbook fetch failed for %s: %s", entity.entity_id, exc)
         self._push(Frame(FrameKind.HISTORY, entity=entity, history=parse_logbook(raw, self.tz)))
+
+    def _fetch_series(self, entity: DeviceEntity, tf: Timeframe) -> Series | None:
+        """Readings for one window: long-term statistics first, raw history second.
+
+        Statistics are 5-minute/hourly aggregates — small and already smoothed,
+        but only recorded for sensors with a ``state_class``. Short windows skip
+        them (their raw history is cheap and sharper), and anything the recorder
+        can't answer falls through to the history API.
+        """
+        eid = entity.entity_id
+        samples: list[tuple[float, float]] = []
+        if tf.period and self.on_statistics is not None:
+            try:
+                samples = samples_from_statistics(self.on_statistics(eid, tf.hours, tf.period))
+            except Exception as exc:  # noqa: BLE001 - the graph is best-effort
+                logger.warning("Statistics fetch failed for %s: %s", eid, exc)
+        if not samples and self.on_history is not None:
+            try:
+                samples = samples_from_history(self.on_history(eid, tf.hours))
+            except Exception as exc:  # noqa: BLE001 - the graph is best-effort
+                logger.warning("History fetch failed for %s: %s", eid, exc)
+        unit = entity.attributes.get("unit_of_measurement", "")
+        return build_series(samples, tf, unit)
+
+    def _open_graph(self, entity: DeviceEntity) -> None:
+        """Open the chart for a numeric sensor, on the last window you picked."""
+        tf = timeframe(state.load().get("graph_range", DEFAULT_RANGE))
+        self._push(Frame(FrameKind.GRAPH, entity=entity, series=self._fetch_series(entity, tf),
+                         data={"range": tf.label}))
+
+    def _set_graph_range(self, label: str | None) -> None:
+        """Switch the graph's window in place (Back still leaves the chart).
+
+        The choice persists, so the next sensor you graph opens on the same span.
+        """
+        with self._lock:
+            frame = self.stack[-1]
+            if frame.kind is not FrameKind.GRAPH or frame.entity is None:
+                return
+            entity = frame.entity
+        tf = timeframe(label)
+        series = self._fetch_series(entity, tf)
+        with self._lock:
+            frame = self.stack[-1]
+            if frame.kind is not FrameKind.GRAPH:
+                return  # navigated away while the fetch was in flight
+            frame.series = series
+            frame.data = {**(frame.data or {}), "range": tf.label}
+        state.save({**state.load(), "graph_range": tf.label})
+        self.render()
 
     def _open_timer(self, entity: DeviceEntity) -> None:
         self._push(Frame(FrameKind.TIMER, entity=entity))
